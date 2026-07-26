@@ -9,7 +9,7 @@ class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models"""
 
 
-class UUIDMixing:
+class UUIDMixin:
     """Adds a UUID primary key"""
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
