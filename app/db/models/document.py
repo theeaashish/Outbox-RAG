@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+from sqlalchemy import BigInteger, Enum, ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base, TimestampMixin, UUIDMixin
+from app.db.models.enums import DocumentStatus
+
+if TYPE_CHECKING:
+    from app.db.models.document_chunk import DocumentChunk
+
+    from app.db.models.knowledge_base import KnowledgeBase
+
+
+class Document(UUIDMixin, TimestampMixin, Base):
+    """Document model."""
+
+    __tablename__ = "documents"
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[DocumentStatus] = mapped_column(
+        Enum(DocumentStatus, name="document_status", native_enum=True),
+        nullable=False,
+        default=DocumentStatus.PENDING,
+    )
+
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    knowledge_base: Mapped[KnowledgeBase] = relationship(
+        back_populates="documents", lazy="selectin"
+    )
+
+    chunks: Mapped[list[DocumentChunk]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
