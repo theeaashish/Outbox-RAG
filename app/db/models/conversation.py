@@ -9,9 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
-    from app.db.models.message import Message
-
     from app.db.models.knowledge_base import KnowledgeBase
+    from app.db.models.message import Message
 
 
 class Conversation(UUIDMixin, TimestampMixin, Base):
