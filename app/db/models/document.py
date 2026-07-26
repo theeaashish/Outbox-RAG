@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, String
+from sqlalchemy import BigInteger, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -11,7 +11,6 @@ from app.db.models.enums import DocumentStatus
 
 if TYPE_CHECKING:
     from app.db.models.document_chunk import DocumentChunk
-
     from app.db.models.knowledge_base import KnowledgeBase
 
 
@@ -46,4 +45,12 @@ class Document(UUIDMixin, TimestampMixin, Base):
         back_populates="document",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "knowledge_base_id",
+            "sha256_hash",
+            name="uq_document_kb_sha256",
+        ),
     )
