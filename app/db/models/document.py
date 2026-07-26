@@ -26,9 +26,15 @@ class Document(UUIDMixin, TimestampMixin, Base):
     sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
-        Enum(DocumentStatus, name="document_status", native_enum=True),
+        Enum(
+            DocumentStatus,
+            name="document_status",
+            native_enum=True,
+            values_callable=lambda enum: [e.value for e in enum],
+        ),
         nullable=False,
         default=DocumentStatus.PENDING,
+        server_default=DocumentStatus.PENDING.value,
     )
 
     knowledge_base_id: Mapped[UUID] = mapped_column(

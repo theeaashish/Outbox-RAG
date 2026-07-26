@@ -23,6 +23,7 @@ class Message(UUIDMixin, TimestampMixin, Base):
             MessageRole,
             name="message_role",
             native_enum=True,
+            values_callable=lambda enum: [e.value for e in enum],
         ),
         nullable=False,
     )
