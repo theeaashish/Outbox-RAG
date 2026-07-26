@@ -1,7 +1,15 @@
+from enum import StrEnum
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Environment(StrEnum):
+    DEVELOPMENT = "development"
+    TESTING = "testing"
+    STAGING = "staging"
+    PRODUCTION = "production"
 
 
 class Settings(BaseSettings):
@@ -10,7 +18,7 @@ class Settings(BaseSettings):
     # application
 
     app_name: str = Field(default="Basic RAG")
-    app_env: str = Field(default="development")
+    app_env: Environment = Environment.DEVELOPMENT
     app_debug: bool = Field(default=True)
 
     app_host: str = Field(default="127.0.0.1")
