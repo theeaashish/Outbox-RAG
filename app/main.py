@@ -5,13 +5,15 @@ from fastapi import FastAPI
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.core.logging import configure_logging
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Application lifecycle"""
 
-    # Startup logic
+    # Startup logic - configure logging
+    configure_logging()
     yield
     # shutdown logic
 
