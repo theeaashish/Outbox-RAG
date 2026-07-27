@@ -58,6 +58,12 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    # Rag settings
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+
+    top_k_chunks: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:
