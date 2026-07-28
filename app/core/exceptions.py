@@ -23,6 +23,14 @@ class ValidationException(AppException):
         )
 
 
+class UnsupportedDocumentTypeError(ValidationException):
+    """Raised when an unsupported document type is requested"""
+
+    def __init__(self, extension: str) -> None:
+        super().__init__(message=f"Unsupported document type: {extension}")
+
+
+
 class NotFoundException(AppException):
     """Raised when a resource is not found"""
 
