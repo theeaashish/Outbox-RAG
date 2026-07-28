@@ -26,6 +26,10 @@ class DocumentParserRegistry:
             ext = f".{ext}"
         return ext
 
+    def supports(self, extension: str) -> bool:
+        """Check if a parser is registered for the given file extension."""
+        return self._normalize_extension(extension) in self._parsers
+
     def register(self, extension: str, parser: DocumentParser) -> None:
         """Register a parser instance for a given file extension."""
         normalized_ext = self._normalize_extension(extension)
