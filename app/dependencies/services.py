@@ -92,3 +92,9 @@ def get_document_service(
         chunker=chunker,
         embedding_generator=embedding_generator,
     )
+
+
+DocumentServiceDep = Annotated[
+    DocumentService,
+    Depends(get_document_service),
+]
