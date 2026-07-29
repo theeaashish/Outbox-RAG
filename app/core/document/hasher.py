@@ -6,7 +6,6 @@ import hashlib
 class FileHasher:
     """Utility class for file hashing"""
 
-    @staticmethod
-    def sha256(content: bytes) -> str:
-        """generate the SHA-256 hash of file content"""
+    def hash(self, content: bytes) -> str:
+        """Generate the SHA-256 hash of file content"""
         return hashlib.sha256(content).hexdigest()

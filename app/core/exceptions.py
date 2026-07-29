@@ -30,7 +30,6 @@ class UnsupportedDocumentTypeError(ValidationException):
         super().__init__(message=f"Unsupported document type: {extension}")
 
 
-
 class NotFoundException(AppException):
     """Raised when a resource is not found"""
 
@@ -78,6 +77,16 @@ class AIServiceException(AppException):
         super().__init__(
             message=message,
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
+class ResourceNotFoundException(AppException):
+    """Raised when a resource is not found"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message=message,
+            status_code=HTTPStatus.NOT_FOUND,
         )
 
 
