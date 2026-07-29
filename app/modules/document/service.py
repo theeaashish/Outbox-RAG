@@ -17,6 +17,7 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.db.models.document import Document
+from app.db.models.document_chunk import DocumentChunk
 from app.db.models.enums import DocumentStatus
 from app.db.models.knowledge_base import KnowledgeBase
 from app.repositories.document import DocumentRepository
@@ -102,7 +103,7 @@ class DocumentService:
 
         storage_path = f"uploads/{knowledge_base.id}/{sha256_hash}{extension}"
 
-        return self._document_repository.create(
+        document = Document(
             title=Path(file.filename).stem,
             filename=file.filename,
             mime_type=file.content_type or "application/octet-stream",
@@ -112,6 +113,8 @@ class DocumentService:
             status=DocumentStatus.PENDING,
             knowledge_base_id=knowledge_base.id,
         )
+
+        return self._document_repository.create(document)
 
     def _create_chunks(
         self,
@@ -125,7 +128,7 @@ class DocumentService:
         for index, (chunk, embedding) in enumerate(
             zip(chunks, embeddings, strict=True)
         ):
-            self._chunk_repository.create(
+            doc_chunk = DocumentChunk(
                 document_id=document.id,
                 chunk_index=index,
                 content=chunk,
@@ -134,6 +137,8 @@ class DocumentService:
                 char_end=None,
                 chunk_metadata=None,
             )
+            self._chunk_repository.create(doc_chunk)
+
 
     def _mark_document_ready(
         self,
