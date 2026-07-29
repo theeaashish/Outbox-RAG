@@ -13,7 +13,8 @@ class DocumentResponse(BaseModel):
     knowledge_base_id: UUID
     filename: str
     mime_type: str
-    size_bytes: int
+    file_size: int
     status: DocumentStatus
     created_at: datetime
     updated_at: datetime
+
