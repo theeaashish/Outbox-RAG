@@ -5,6 +5,7 @@ from fastapi import Depends
 from app.dependencies.services import (
     DocumentChunkRepositoryDep,
     EmbeddingGeneratorDep,
+    KnowledgeBaseRepositoryDep,
 )
 from app.modules.retrieval.controller import RetrievalController
 from app.modules.retrieval.service import RetrievalService
@@ -13,10 +14,12 @@ from app.modules.retrieval.service import RetrievalService
 def get_retrieval_service(
     embedding_generator: EmbeddingGeneratorDep,
     chunk_repository: DocumentChunkRepositoryDep,
+    knowledge_base_repository: KnowledgeBaseRepositoryDep,
 ) -> RetrievalService:
     return RetrievalService(
         embedding_generator=embedding_generator,
         chunk_repository=chunk_repository,
+        knowledge_base_repository=knowledge_base_repository,
     )
 
 

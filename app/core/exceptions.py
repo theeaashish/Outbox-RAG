@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+import logging
 from http import HTTPStatus
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class AppException(Exception):
@@ -100,8 +105,42 @@ class DatabaseException(AppException):
         )
 
 
-async def app_exception_handler(_: Request, exc: AppException) -> JSONResponse:
+class StorageException(AppException):
+    """Raised when a storage operation fails"""
+
+    def __init__(self, message: str = "Storage operation failed") -> None:
+        super().__init__(
+            message=message,
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+
+
+class DocumentParsingException(AppException):
+    """Raised when a document cannot be parsed into usable text"""
+
+    def __init__(self, message: str = "Failed to parse document") -> None:
+        super().__init__(
+            message=message,
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        )
+
+
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     """Handle AppException and return JSON response"""
+
+    if exc.status_code >= 500:
+        logger.error(
+            "Application error: %s",
+            exc.message,
+            extra={"path": request.url.path, "status_code": exc.status_code},
+        )
+    else:
+        logger.warning(
+            "Application error: %s",
+            exc.message,
+            extra={"path": request.url.path, "status_code": exc.status_code},
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -113,6 +152,27 @@ async def app_exception_handler(_: Request, exc: AppException) -> JSONResponse:
     )
 
 
+async def unhandled_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    """Handle unexpected exceptions with a safe JSON envelope."""
+
+    logger.exception(
+        "Unhandled exception",
+        extra={"path": request.url.path},
+    )
+    return JSONResponse(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        content={
+            "success": False,
+            "error": {
+                "message": "Internal server error",
+            },
+        },
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register exception handlers"""
     app.add_exception_handler(AppException, app_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)

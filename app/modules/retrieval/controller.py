@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from starlette.concurrency import run_in_threadpool
+
 from app.modules.retrieval.schemas import RetrievalResponse, RetrievedChunkResponse
 from app.modules.retrieval.service import RetrievalService
 
@@ -16,19 +18,24 @@ class RetrievalController:
     ) -> None:
         self.retrieval_service = retrieval_service
 
-    def retrieve(
+    async def retrieve(
         self,
         *,
         knowledge_base_id: UUID,
         query: str,
         limit: int = 5,
+        threshold: float | None = None,
     ) -> RetrievalResponse:
         """
         Retrieve relevant chunks for a query and return RetrievalResponse.
         """
 
-        retrieved_chunks = self.retrieval_service.retrieve(
-            knowledge_base_id=knowledge_base_id, query=query, limit=limit
+        retrieved_chunks = await run_in_threadpool(
+            self.retrieval_service.retrieve,
+            knowledge_base_id=knowledge_base_id,
+            query=query,
+            limit=limit,
+            threshold=threshold,
         )
 
         return RetrievalResponse(
@@ -39,8 +46,8 @@ class RetrievalController:
                     chunk_index=rc.chunk.chunk_index,
                     content=rc.chunk.content,
                     score=rc.similarity,
-                    char_start=rc.chunk.char_start if rc.chunk.char_start is not None else 0,
-                    char_end=rc.chunk.char_end if rc.chunk.char_end is not None else 0,
+                    char_start=rc.chunk.char_start,
+                    char_end=rc.chunk.char_end,
                 )
                 for rc in retrieved_chunks
             ]

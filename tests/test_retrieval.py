@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from app.core.ai.retrieval.models import RetrievedChunk
 from app.db.models import Document, DocumentChunk
 from app.modules.retrieval.controller import RetrievalController
@@ -24,7 +26,8 @@ def test_retrieved_chunk_instantiation():
     assert retrieved.similarity == 0.95
 
 
-def test_retrieval_controller_response_mapping():
+@pytest.mark.anyio
+async def test_retrieval_controller_response_mapping():
     doc = Document(id=uuid4(), title="Test Doc", filename="test.pdf")
     chunk = DocumentChunk(
         id=uuid4(),
@@ -41,7 +44,7 @@ def test_retrieval_controller_response_mapping():
     mock_service.retrieve.return_value = [retrieved_item]
     
     controller = RetrievalController(retrieval_service=mock_service)
-    response = controller.retrieve(knowledge_base_id=uuid4(), query="test query", limit=5)
+    response = await controller.retrieve(knowledge_base_id=uuid4(), query="test query", limit=5)
     
     assert isinstance(response, RetrievalResponse)
     assert len(response.results) == 1

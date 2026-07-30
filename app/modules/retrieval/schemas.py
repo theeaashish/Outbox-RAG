@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
+
 
 class RetrievalRequest(BaseModel):
     """Request model for semantic search."""
@@ -14,10 +16,20 @@ class RetrievalRequest(BaseModel):
     )
 
     limit: int = Field(
-        default=5,
+        default_factory=lambda: settings.default_top_k,
         ge=1,
         le=20,
         description="Maximum number of chunks to retrieve.",
+    )
+
+    threshold: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "Optional minimum cosine similarity. When omitted, top-k "
+            "retrieval is used without a score floor."
+        ),
     )
 
 
@@ -33,8 +45,8 @@ class RetrievedChunkResponse(BaseModel):
 
     score: float
 
-    char_start: int
-    char_end: int
+    char_start: int | None
+    char_end: int | None
 
 
 class RetrievalResponse(BaseModel):

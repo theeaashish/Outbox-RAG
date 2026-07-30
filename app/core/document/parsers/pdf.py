@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 
 from pypdf import PdfReader
 
 from app.core.document.parsers.base import DocumentParser
+from app.core.exceptions import DocumentParsingException
+
+logger = logging.getLogger(__name__)
 
 
 class PDFParser(DocumentParser):
@@ -12,14 +16,24 @@ class PDFParser(DocumentParser):
 
     def extract_text(self, content: bytes) -> str:
         """Extract text from pdf document"""
-        reader = PdfReader(BytesIO(content))
 
-        pages: list[str] = []
+        try:
+            reader = PdfReader(BytesIO(content))
 
-        for page in reader.pages:
-            text = page.extract_text()
+            pages: list[str] = []
 
-            if text:
-                pages.append(text)
+            for page in reader.pages:
+                text = page.extract_text()
 
-        return "\n".join(pages)
+                if text:
+                    pages.append(text)
+
+            return "\n".join(pages)
+        except DocumentParsingException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "PDF parsing failed",
+                extra={"content_size": len(content)},
+            )
+            raise DocumentParsingException("Failed to parse PDF document") from exc

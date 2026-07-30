@@ -6,9 +6,11 @@ from app.core.ai.chunking.base import TextChunker
 from app.core.ai.chunking.recursive import RecursiveTextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.ai.embeddings.gemini import GeminiEmbeddingGenerator
+from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
+from app.core.storage import LocalFilesystemStorage, StorageService
 
 
 @lru_cache
@@ -39,3 +41,9 @@ def get_file_hasher() -> FileHasher:
 def get_upload_validator() -> UploadValidator:
     """Return the application's upload validator"""
     return UploadValidator(parser_registry=get_document_parser_registry())
+
+
+@lru_cache
+def get_storage_service() -> StorageService:
+    """Return the application's storage service"""
+    return LocalFilesystemStorage(root_directory=settings.upload_directory)

@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.document.hasher import FileHasher
+from app.core.document.incoming_file import IncomingFile
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
 from app.core.exceptions import (
     AIServiceException,
+    ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
+from app.core.storage.base import StorageService
 from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
 from app.db.models.enums import DocumentStatus
@@ -23,6 +27,8 @@ from app.db.models.knowledge_base import KnowledgeBase
 from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -40,6 +46,7 @@ class DocumentService:
         hasher: FileHasher,
         chunker: TextChunker,
         embedding_generator: EmbeddingGenerator,
+        storage: StorageService,
     ) -> None:
         self._db = db
 
@@ -53,6 +60,7 @@ class DocumentService:
         self._hasher = hasher
         self._chunker = chunker
         self._embedding_generator = embedding_generator
+        self._storage = storage
 
     def _get_knowledge_base(self, *, knowledge_base_id: UUID) -> KnowledgeBase:
         knowledge_base = self._knowledge_base_repository.get_by_id(knowledge_base_id)
@@ -89,19 +97,27 @@ class DocumentService:
         if len(chunks) != len(embeddings):
             raise AIServiceException("Chunk and embedding count mismatch")
 
+    def _build_storage_path(
+        self,
+        *,
+        knowledge_base_id: UUID,
+        sha256_hash: str,
+        filename: str,
+    ) -> str:
+        """Return the relative storage key for a document."""
+
+        extension = Path(filename).suffix
+        return f"{knowledge_base_id}/{sha256_hash}{extension}"
+
     def _create_document(
         self,
         *,
         knowledge_base: KnowledgeBase,
-        file: UploadFile,
+        file: IncomingFile,
         sha256_hash: str,
-        file_size: int,
+        storage_path: str,
     ) -> Document:
         """Create and persist a document."""
-
-        extension = Path(file.filename).suffix
-
-        storage_path = f"uploads/{knowledge_base.id}/{sha256_hash}{extension}"
 
         document = Document(
             title=Path(file.filename).stem,
@@ -109,7 +125,7 @@ class DocumentService:
             mime_type=file.content_type or "application/octet-stream",
             storage_path=storage_path,
             sha256_hash=sha256_hash,
-            file_size=file_size,
+            file_size=file.size,
             status=DocumentStatus.PENDING,
             knowledge_base_id=knowledge_base.id,
         )
@@ -139,7 +155,6 @@ class DocumentService:
             )
             self._chunk_repository.create(doc_chunk)
 
-
     def _mark_document_ready(
         self,
         *,
@@ -154,81 +169,117 @@ class DocumentService:
         *,
         document: Document,
     ) -> None:
-        """Mark the document as failed."""
+        """
+        Mark the document as failed.
+
+        Reserved for a future async ingestion worker that creates a row
+        before processing completes. Not used on the sync request path.
+        """
 
         document.status = DocumentStatus.FAILED
 
-    async def upload_document(
+    def _cleanup_storage(self, *, storage_path: str) -> None:
+        """Best-effort delete of a stored file after a failed DB commit."""
+
+        try:
+            self._storage.delete(storage_path)
+        except Exception:
+            logger.exception(
+                "Failed to clean up stored file after DB failure",
+                extra={"path": storage_path},
+            )
+
+    def upload_document(
         self,
         *,
         knowledge_base_id: UUID,
-        file: UploadFile,
+        file: IncomingFile,
     ) -> Document:
         """Upload and ingest a document into a knowledge base"""
 
-        # Validate upload
+        logger.info(
+            "Upload started",
+            extra={
+                "kb_id": str(knowledge_base_id),
+                "filename": file.filename,
+                "size": file.size,
+            },
+        )
+
         extension = self._validator.validate(file)
 
-        # Retrieve knowledge base
         knowledge_base = self._get_knowledge_base(knowledge_base_id=knowledge_base_id)
 
-        # Read uploaded file
-        content = await file.read()
-
-        # Generate file hash
+        content = file.content
         file_hash = self._hasher.hash(content)
 
-        # Check duplicate document
         self._ensure_document_is_unique(
             knowledge_base_id=knowledge_base.id,
             sha256_hash=file_hash,
         )
 
-        # Resolve parser
         parser = self._parser_registry.get_parser(extension)
+        logger.info(
+            "Parser selected",
+            extra={"extension": extension, "parser": type(parser).__name__},
+        )
 
-        # Extract text
         text = parser.extract_text(content)
-
-        # Ensure text was extracted
         self._ensure_text_was_extracted(text=text)
 
-        # Chunk text
         chunks = self._chunker.split(text)
+        if not chunks:
+            raise ValidationException("Document produced no chunks")
 
-        # Generate embeddings
+        logger.info("Chunks generated", extra={"chunk_count": len(chunks)})
+
         embeddings = self._embedding_generator.embed_documents(chunks)
-
-        # Ensure embeddings match chunks
         self._ensure_embeddings_match_chunks(chunks=chunks, embeddings=embeddings)
 
-        # Database transaction phase
+        storage_path = self._build_storage_path(
+            knowledge_base_id=knowledge_base.id,
+            sha256_hash=file_hash,
+            filename=file.filename,
+        )
+        storage_saved = False
+
         try:
-            # Create document
+            self._storage.save(storage_path, content)
+            storage_saved = True
+
             document = self._create_document(
                 knowledge_base=knowledge_base,
                 file=file,
                 sha256_hash=file_hash,
-                file_size=len(content),
+                storage_path=storage_path,
             )
 
-            # Flush document
             self._db.flush()
-
-            # Create chunks
             self._create_chunks(document=document, chunks=chunks, embeddings=embeddings)
-
-            # Mark document as ready
             self._mark_document_ready(document=document)
-
-            # Commit transaction
             self._db.commit()
+        except IntegrityError as exc:
+            self._db.rollback()
+            if storage_saved:
+                self._cleanup_storage(storage_path=storage_path)
+            raise ConflictException(
+                "Document with same content already exists"
+            ) from exc
         except Exception:
             self._db.rollback()
+            if storage_saved:
+                self._cleanup_storage(storage_path=storage_path)
             raise
 
-        # Refresh document
         self._db.refresh(document)
 
-        # Return document
+        logger.info(
+            "Upload completed",
+            extra={
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document.id),
+                "chunk_count": len(chunks),
+            },
+        )
+
         return document

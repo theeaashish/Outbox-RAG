@@ -9,10 +9,12 @@ from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
+from app.core.storage import StorageService
 from app.dependencies.core import (
     get_document_parser_registry,
     get_embedding_generator,
     get_file_hasher,
+    get_storage_service,
     get_text_chunker,
     get_upload_validator,
 )
@@ -67,6 +69,11 @@ FileHasherDep = Annotated[
     Depends(get_file_hasher),
 ]
 
+StorageServiceDep = Annotated[
+    StorageService,
+    Depends(get_storage_service),
+]
+
 
 def get_document_service(
     db: DBSession,
@@ -78,6 +85,7 @@ def get_document_service(
     hasher: FileHasherDep,
     chunker: TextChunkerDep,
     embedding_generator: EmbeddingGeneratorDep,
+    storage: StorageServiceDep,
 ) -> DocumentService:
     """Return a configured DocumentService."""
 
@@ -91,6 +99,7 @@ def get_document_service(
         hasher=hasher,
         chunker=chunker,
         embedding_generator=embedding_generator,
+        storage=storage,
     )
 
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.ai.retrieval.models import RetrievedChunk
 from app.db.models import Document, DocumentChunk
+from app.db.models.enums import DocumentStatus
 from app.repositories.base import BaseRepository
 
 
@@ -38,19 +39,27 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         knowledge_base_id: UUID,
         embedding: list[float],
         limit: int = 5,
+        threshold: float | None = None,
     ) -> list[RetrievedChunk]:
         """
         Retrieve the most similar chunks within a knowledge base using
-        cosine similarity.
+        cosine similarity. Only READY documents are searched.
         """
 
         distance = DocumentChunk.embedding.cosine_distance(embedding)
         similarity = (1 - distance).label("similarity")
 
+        filters = [
+            Document.knowledge_base_id == knowledge_base_id,
+            Document.status == DocumentStatus.READY,
+        ]
+        if threshold is not None:
+            filters.append((1 - distance) >= threshold)
+
         statement = (
             select(DocumentChunk, similarity)
             .join(Document)
-            .where(Document.knowledge_base_id == knowledge_base_id)
+            .where(*filters)
             .order_by(distance.asc())
             .limit(limit)
         )

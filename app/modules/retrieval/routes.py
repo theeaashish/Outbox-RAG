@@ -12,7 +12,7 @@ router = APIRouter(
 
 
 @router.post("/{knowledge_base_id}/search", response_model=RetrievalResponse)
-def retrieve(
+async def retrieve(
     *,
     knowledge_base_id: UUID,
     request: RetrievalRequest,
@@ -20,6 +20,9 @@ def retrieve(
 ) -> RetrievalResponse:
     """Perform semantic search within a knowledge base"""
 
-    return controller.retrieve(
-        knowledge_base_id=knowledge_base_id, query=request.query, limit=request.limit
+    return await controller.retrieve(
+        knowledge_base_id=knowledge_base_id,
+        query=request.query,
+        limit=request.limit,
+        threshold=request.threshold,
     )
