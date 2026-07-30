@@ -60,7 +60,7 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         return [
             RetrievedChunk(
                 chunk=chunk,
-                score=float(score),
+                similarity=float(similarity_val),
             )
-            for chunk, score in rows
+            for chunk, similarity_val in rows
         ]

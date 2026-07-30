@@ -2,23 +2,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.dependencies.database import DbSessionDep
-from app.dependencies.embeddings import EmbeddingGeneratorDep
+from app.dependencies.services import (
+    DocumentChunkRepositoryDep,
+    EmbeddingGeneratorDep,
+)
 from app.modules.retrieval.controller import RetrievalController
 from app.modules.retrieval.service import RetrievalService
-from app.repositories.document_chunk import DocumentChunkRepository
-
-
-def get_document_chunk_repository(
-    db: DbSessionDep,
-) -> DocumentChunkRepository:
-    return DocumentChunkRepository(db=db)
-
-
-DocumentChunkRepositoryDep = Annotated[
-    DocumentChunkRepository,
-    Depends(get_document_chunk_repository),
-]
 
 
 def get_retrieval_service(
