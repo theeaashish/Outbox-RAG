@@ -5,7 +5,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import DocumentChunk
+from app.core.ai.retrieval.models import RetrievedChunk
+from app.db.models import Document, DocumentChunk
 from app.repositories.base import BaseRepository
 
 
@@ -30,3 +31,36 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
             .order_by(DocumentChunk.chunk_index.asc())
         )
         return list(self.db.scalars(statement))
+
+    def search_similar(
+        self,
+        *,
+        knowledge_base_id: UUID,
+        embedding: list[float],
+        limit: int = 5,
+    ) -> list[RetrievedChunk]:
+        """
+        Retrieve the most similar chunks within a knowledge base using
+        cosine similarity.
+        """
+
+        distance = DocumentChunk.embedding.cosine_distance(embedding)
+        similarity = (1 - distance).label("similarity")
+
+        statement = (
+            select(DocumentChunk, similarity)
+            .join(Document)
+            .where(Document.knowledge_base_id == knowledge_base_id)
+            .order_by(distance.asc())
+            .limit(limit)
+        )
+
+        rows = self.db.execute(statement)
+
+        return [
+            RetrievedChunk(
+                chunk=chunk,
+                score=float(score),
+            )
+            for chunk, score in rows
+        ]
