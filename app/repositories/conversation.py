@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -18,15 +19,22 @@ class ConversationRepository(BaseRepository[Conversation]):
             model=Conversation,
         )
 
-    def get_by_session_and_knowledge_base(
+    def list_by_knowledge_base(
         self,
         *,
-        session_id: str,
         knowledge_base_id: UUID,
-    ) -> Conversation | None:
-        """Retrieve a conversation by session ID and knowledge base ID."""
-        statement = select(Conversation).where(
-            Conversation.session_id == session_id,
-            Conversation.knowledge_base_id == knowledge_base_id,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[Conversation]:
+        """Return conversations for a knowledge base ordered newest first."""
+        statement = (
+            select(Conversation)
+            .where(Conversation.knowledge_base_id == knowledge_base_id)
+            .order_by(
+                Conversation.created_at.desc(),
+                Conversation.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
         )
-        return self.db.scalar(statement)
+        return self.db.scalars(statement).all()

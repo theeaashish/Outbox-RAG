@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -17,12 +17,6 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
     """Represents a chat conversation."""
 
     __tablename__ = "conversations"
-
-    session_id: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-        index=True,
-    )
 
     knowledge_base_id: Mapped[UUID] = mapped_column(
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
@@ -39,12 +33,5 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
         lazy="selectin",
-    )
-
-    __table_args__ = (
-        Index(
-            "ix_conversation_kb_session",
-            "knowledge_base_id",
-            "session_id",
-        ),
+        order_by="Message.created_at",
     )

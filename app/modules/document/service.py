@@ -201,7 +201,7 @@ class DocumentService:
             "Upload started",
             extra={
                 "kb_id": str(knowledge_base_id),
-                "filename": file.filename,
+                "filename": file.filename,  # noqa: G101
                 "size": file.size,
             },
         )
