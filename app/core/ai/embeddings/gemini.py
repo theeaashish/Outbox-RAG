@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from pydantic import SecretStr
 
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.config import settings
@@ -19,7 +20,7 @@ class GeminiEmbeddingGenerator(EmbeddingGenerator):
         self._model_name = settings.gemini_embedding_model
         self._embeddings = GoogleGenerativeAIEmbeddings(
             model=self._model_name,
-            api_key=settings.google_api_key,
+            api_key=SecretStr(settings.google_api_key),
             output_dimensionality=EMBEDDING_DIMENSION,
         )
 

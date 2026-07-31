@@ -5,10 +5,10 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
-from app.db.base import Base
+from app.db.base import UUIDMixin
 
 
-class BaseRepository[ModelT: Base]:
+class BaseRepository[ModelT: UUIDMixin]:
     """Base repository class for generic database operations."""
 
     def __init__(

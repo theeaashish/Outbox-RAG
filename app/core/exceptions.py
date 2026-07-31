@@ -125,8 +125,9 @@ class DocumentParsingException(AppException):
         )
 
 
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+async def app_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle AppException and return JSON response"""
+    assert isinstance(exc, AppException)
 
     if exc.status_code >= 500:
         logger.error(

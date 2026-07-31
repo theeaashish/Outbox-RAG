@@ -28,11 +28,13 @@ class Settings(BaseSettings):
 
     # database
 
-    database_url: str
+    database_url: str = Field(
+        default="postgresql+psycopg://postgres:postgres@localhost:5432/basic_rag"
+    )
 
     # gemini
 
-    google_api_key: str
+    google_api_key: str = Field(default="")
 
     gemini_chat_model: str = Field(default="gemini-2.5-flash")
 

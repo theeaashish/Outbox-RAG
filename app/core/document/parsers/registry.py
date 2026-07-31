@@ -9,13 +9,14 @@ class DocumentParserRegistry:
     """Registry mapping supported document file extensions to parser instances."""
 
     def __init__(self, parsers: dict[str, DocumentParser] | None = None) -> None:
+        self._parsers: dict[str, DocumentParser]
         if parsers is not None:
-            self._parsers: dict[str, DocumentParser] = {
+            self._parsers = {
                 self._normalize_extension(ext): parser
                 for ext, parser in parsers.items()
             }
         else:
-            self._parsers: dict[str, DocumentParser] = {
+            self._parsers = {
                 ".pdf": PDFParser(),
             }
 
