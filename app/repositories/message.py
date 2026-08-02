@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -18,11 +19,19 @@ class MessageRepository(BaseRepository[Message]):
             model=Message,
         )
 
-    def get_by_conversation(self, *, conversation_id: UUID) -> list[Message]:
-        """Retrieve all messages for a given conversation."""
+    def list_by_conversation(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[Message]:
+        """Retrieve messages for a given conversation, oldest first, up to limit."""
         statement = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.created_at.asc(), Message.id.asc())
+            .limit(limit)
+            .offset(offset)
         )
         return list(self.db.scalars(statement))
