@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     gemini_embedding_model: str = Field(default="gemini-embedding-001")
 
+    gemini_chat_temperature: float = Field(default=0.7)
+
     # upload
 
     upload_directory: str = Field(default="uploads")
