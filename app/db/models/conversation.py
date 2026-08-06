@@ -26,12 +26,12 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(
         back_populates="conversations",
-        lazy="selectin",
+        lazy="select",
     )
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
         order_by="Message.created_at",
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager
 
 from app.core.ai.retrieval.models import RetrievedChunk
 from app.db.models import Document, DocumentChunk
@@ -59,6 +59,7 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         statement = (
             select(DocumentChunk, similarity)
             .join(Document)
+            .options(contains_eager(DocumentChunk.document))
             .where(*filters)
             .order_by(distance.asc())
             .limit(limit)

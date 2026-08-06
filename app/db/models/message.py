@@ -41,7 +41,7 @@ class Message(UUIDMixin, TimestampMixin, Base):
 
     conversation: Mapped[Conversation] = relationship(
         back_populates="messages",
-        lazy="selectin",
+        lazy="select",
     )
 
     __table_args__ = (

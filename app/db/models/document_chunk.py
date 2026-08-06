@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     CheckConstraint,
     ForeignKey,
+    Index,
     Integer,
     Text,
     UniqueConstraint,
@@ -51,7 +52,7 @@ class DocumentChunk(UUIDMixin, TimestampMixin, Base):
 
     document: Mapped[Document] = relationship(
         back_populates="chunks",
-        lazy="selectin",
+        lazy="select",
     )
 
     __table_args__ = (
@@ -59,6 +60,12 @@ class DocumentChunk(UUIDMixin, TimestampMixin, Base):
             "document_id",
             "chunk_index",
             name="uq_document_chunk_index",
+        ),
+        Index(
+            "ix_document_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
         CheckConstraint(
             "chunk_index >= 0",

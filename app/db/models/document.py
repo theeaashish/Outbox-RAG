@@ -44,13 +44,13 @@ class Document(UUIDMixin, TimestampMixin, Base):
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(
-        back_populates="documents", lazy="selectin"
+        back_populates="documents", lazy="select"
     )
 
     chunks: Mapped[list[DocumentChunk]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
 
     __table_args__ = (

@@ -22,11 +22,11 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
     documents: Mapped[list[Document]] = relationship(
         back_populates="knowledge_base",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
 
     conversations: Mapped[list[Conversation]] = relationship(
         back_populates="knowledge_base",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="select",
     )
