@@ -35,3 +35,21 @@ class MessageRepository(BaseRepository[Message]):
             .offset(offset)
         )
         return list(self.db.scalars(statement))
+
+    def list_recent_by_conversation(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int,
+    ) -> Sequence[Message]:
+        """Return the most recent messages in chronological order."""
+
+        statement = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit)
+        )
+        messages = list(self.db.scalars(statement))
+        messages.reverse()
+        return messages

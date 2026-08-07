@@ -4,8 +4,13 @@ from functools import lru_cache
 
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.chunking.recursive import RecursiveTextChunker
+from app.core.ai.context.assembler import ContextAssembler
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.ai.embeddings.gemini import GeminiEmbeddingGenerator
+from app.core.ai.llm.base import LLMProvider
+from app.core.ai.llm.gemini import GeminiLLMProvider
+from app.core.ai.prompting.base import PromptBuilder
+from app.core.ai.prompting.rag import RAGPromptBuilder
 from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
@@ -47,3 +52,24 @@ def get_upload_validator() -> UploadValidator:
 def get_storage_service() -> StorageService:
     """Return the application's storage service"""
     return LocalFilesystemStorage(root_directory=settings.upload_directory)
+
+
+@lru_cache
+def get_context_assembler() -> ContextAssembler:
+    """Return the application's context assembler."""
+
+    return ContextAssembler()
+
+
+@lru_cache
+def get_prompt_builder() -> PromptBuilder:
+    """Return the application's RAG prompt builder."""
+
+    return RAGPromptBuilder()
+
+
+@lru_cache
+def get_llm_provider() -> LLMProvider:
+    """Return the application's chat language model provider."""
+
+    return GeminiLLMProvider()

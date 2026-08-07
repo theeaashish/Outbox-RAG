@@ -68,6 +68,12 @@ class Settings(BaseSettings):
 
     top_k_chunks: int = 5
 
+    # chat
+
+    chat_history_message_limit: int = Field(default=20, ge=1)
+
+    chat_max_message_characters: int = Field(default=10_000, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:
