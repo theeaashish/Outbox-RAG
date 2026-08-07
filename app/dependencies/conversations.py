@@ -4,6 +4,8 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.core.pagination import CursorCodec
+from app.dependencies.core import get_cursor_codec
 from app.dependencies.repositories import (
     DBSession,
     get_conversation_repository,
@@ -25,12 +27,15 @@ MessageRepositoryDep = Annotated[
     Depends(get_message_repository),
 ]
 
+CursorCodecDep = Annotated[CursorCodec, Depends(get_cursor_codec)]
+
 
 def get_conversation_service(
     db: DBSession,
     conversation_repository: ConversationRepositoryDep,
     knowledge_base_repository: KnowledgeBaseRepositoryDep,
     message_repository: MessageRepositoryDep,
+    cursor_codec: CursorCodecDep,
 ) -> ConversationService:
     """Return a configured ConversationService."""
 
@@ -39,6 +44,7 @@ def get_conversation_service(
         conversation_repository=conversation_repository,
         knowledge_base_repository=knowledge_base_repository,
         message_repository=message_repository,
+        cursor_codec=cursor_codec,
     )
 
 

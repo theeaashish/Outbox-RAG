@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     gemini_chat_temperature: float = Field(default=0.7)
 
+    gemini_chat_max_output_tokens: int = Field(default=4_096, ge=1)
+
     # upload
 
     upload_directory: str = Field(default="uploads")
@@ -73,6 +75,22 @@ class Settings(BaseSettings):
     chat_history_message_limit: int = Field(default=20, ge=1)
 
     chat_max_message_characters: int = Field(default=10_000, ge=1)
+
+    chat_stream_first_token_timeout_seconds: int = Field(default=20, ge=1)
+
+    chat_stream_idle_timeout_seconds: int = Field(default=30, ge=1)
+
+    chat_stream_total_timeout_seconds: int = Field(default=120, ge=1)
+
+    chat_stream_max_buffered_characters: int = Field(default=65_536, ge=1)
+
+    chat_stream_ping_interval_seconds: int = Field(default=15, ge=1)
+
+    api_v2_prefix: str = Field(default="/api/v2")
+
+    cursor_signing_key: str = Field(default="development-only-change-me")
+
+    cursor_previous_signing_key: str | None = Field(default=None)
 
 
 @lru_cache

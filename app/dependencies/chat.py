@@ -72,6 +72,7 @@ def get_chat_service(
         history_message_limit=settings.chat_history_message_limit,
         retrieval_limit=settings.default_top_k,
         similarity_threshold=settings.similarity_threshold,
+        stream_max_buffered_characters=settings.chat_stream_max_buffered_characters,
     )
 
 

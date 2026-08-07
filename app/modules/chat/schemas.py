@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.ai.llm.models import LLMUsage
 from app.core.config import settings
 from app.modules.conversations.schemas import MessageResponse
 
@@ -43,3 +44,24 @@ class ChatResponse(BaseModel):
 
     assistant_message: MessageResponse
     sources: list[ChatSourceResponse]
+
+
+class ChatStreamMetadataResponse(BaseModel):
+    conversation_id: UUID
+    source_count: int
+
+
+class ChatStreamTokenResponse(BaseModel):
+    delta: str
+
+
+class ChatStreamCompleteResponse(BaseModel):
+    assistant_message: MessageResponse
+    model: str
+    finish_reason: str
+    usage: LLMUsage | None
+
+
+class ChatStreamErrorResponse(BaseModel):
+    code: str
+    message: str

@@ -4,8 +4,10 @@ from uuid import UUID
 
 from app.modules.conversations import mapper
 from app.modules.conversations.schemas import (
+    ConversationCursorPageResponse,
     ConversationListResponse,
     ConversationResponse,
+    MessageCursorPageResponse,
     MessageListResponse,
 )
 from app.modules.conversations.service import ConversationService
@@ -80,6 +82,48 @@ class ConversationController:
         )
 
         return mapper.to_message_list_response(messages)
+
+    def list_conversations_cursor(
+        self,
+        *,
+        knowledge_base_id: UUID,
+        page_size: int,
+        after: str | None = None,
+        before: str | None = None,
+    ) -> ConversationCursorPageResponse:
+        page = self._conversation_service.list_conversations_cursor(
+            knowledge_base_id=knowledge_base_id,
+            page_size=page_size,
+            after=after,
+            before=before,
+        )
+        return mapper.to_conversation_cursor_page_response(
+            page=page,
+            page_size=page_size,
+            knowledge_base_id=knowledge_base_id,
+            cursor_codec=self._conversation_service.cursor_codec,
+        )
+
+    def list_messages_cursor(
+        self,
+        *,
+        conversation_id: UUID,
+        page_size: int,
+        after: str | None = None,
+        before: str | None = None,
+    ) -> MessageCursorPageResponse:
+        page = self._conversation_service.list_messages_cursor(
+            conversation_id=conversation_id,
+            page_size=page_size,
+            after=after,
+            before=before,
+        )
+        return mapper.to_message_cursor_page_response(
+            page=page,
+            page_size=page_size,
+            conversation_id=conversation_id,
+            cursor_codec=self._conversation_service.cursor_codec,
+        )
 
     def delete_conversation(
         self,

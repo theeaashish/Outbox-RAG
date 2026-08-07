@@ -10,3 +10,9 @@ wheels/
 .venv
 
 .env
+
+# Testing & Coverage
+.coverage
+.pytest_cache/
+.ruff_cache/
+htmlcov/

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.core.ai.llm.models import ChatMessage, LLMResponse
+from app.core.ai.llm.models import ChatMessage, LLMResponse, LLMStream
 
 
 class LLMProvider(ABC):
@@ -16,4 +16,12 @@ class LLMProvider(ABC):
         """
         Generate an assistant response for the supplied chat messages.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def stream(
+        self,
+        messages: list[ChatMessage],
+    ) -> LLMStream:
+        """Stream a provider-neutral assistant response."""
         raise NotImplementedError

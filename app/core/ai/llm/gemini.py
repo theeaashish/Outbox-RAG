@@ -1,19 +1,95 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from collections.abc import Iterator
+from typing import Any, ClassVar, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import SecretStr
 
 from app.core.ai.llm.base import LLMProvider
-from app.core.ai.llm.models import ChatMessage, LLMResponse, LLMUsage
+from app.core.ai.llm.models import (
+    ChatMessage,
+    LLMResponse,
+    LLMStream,
+    LLMStreamCompletion,
+    LLMStreamDelta,
+    LLMStreamEvent,
+    LLMUsage,
+)
 from app.core.config import settings
 from app.core.exceptions import AIServiceException
 from app.db.models.enums import MessageRole
 
 logger = logging.getLogger(__name__)
+
+
+class _GeminiLLMStream:
+    """Closable adapter from LangChain/Gemini chunks to provider-neutral events."""
+
+    def __init__(
+        self,
+        *,
+        source: Iterator[Any],
+        model_name: str,
+        message_count: int,
+    ) -> None:
+        self._source = source
+        self._model_name = model_name
+        self._message_count = message_count
+        self._closed = False
+        self._iterator = self._events()
+
+    def __iter__(self) -> Iterator[LLMStreamEvent]:
+        return self
+
+    def __next__(self) -> LLMStreamEvent:
+        return next(self._iterator)
+
+    def close(self) -> None:
+        """Release the underlying vendor iterator exactly once."""
+
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self._source, "close", None)
+        if callable(close):
+            close()
+
+    def _events(self) -> Iterator[LLMStreamEvent]:
+        last_chunk: Any | None = None
+        try:
+            for chunk in self._source:
+                if self._closed:
+                    return
+                last_chunk = chunk
+                content = GeminiLLMProvider._extract_text(cast(Any, chunk.content))
+                if content:
+                    yield LLMStreamDelta(content=content)
+
+            metadata = getattr(last_chunk, "response_metadata", None)
+            usage_metadata = getattr(last_chunk, "usage_metadata", None)
+            yield LLMStreamCompletion(
+                model=self._model_name,
+                finish_reason=GeminiLLMProvider._normalize_finish_reason(
+                    GeminiLLMProvider._extract_finish_reason(metadata)
+                ),
+                usage=GeminiLLMProvider._to_usage(usage_metadata),
+            )
+        except AIServiceException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "LLM stream failed",
+                extra={
+                    "model": self._model_name,
+                    "message_count": self._message_count,
+                },
+            )
+            raise AIServiceException("LLM stream failed") from exc
+        finally:
+            self.close()
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -25,6 +101,21 @@ class GeminiLLMProvider(LLMProvider):
         MessageRole.ASSISTANT: AIMessage,
     }
 
+    _FINISH_REASON_MAP: ClassVar[dict[str, str]] = {
+        "stop": "stop",
+        "STOP": "stop",
+        "length": "length",
+        "MAX_TOKENS": "length",
+        "max_tokens": "length",
+        "safety": "safety",
+        "SAFETY": "safety",
+        "RECITATION": "safety",
+        "recitation": "safety",
+        "OTHER": "error",
+        "other": "error",
+        "FINISH_REASON_UNSPECIFIED": "unknown",
+    }
+
     def __init__(self) -> None:
         self._model_name = settings.gemini_chat_model
 
@@ -32,6 +123,7 @@ class GeminiLLMProvider(LLMProvider):
             model=self._model_name,
             api_key=SecretStr(settings.google_api_key),
             temperature=settings.gemini_chat_temperature,
+            max_output_tokens=settings.gemini_chat_max_output_tokens,
         )
 
     def generate(self, messages: list[ChatMessage]) -> LLMResponse:
@@ -60,6 +152,27 @@ class GeminiLLMProvider(LLMProvider):
         )
 
         return llm_response
+
+    def stream(self, messages: list[ChatMessage]) -> LLMStream:
+        """Stream Gemini output as normalized provider-neutral events."""
+
+        try:
+            langchain_messages = self._to_langchain_messages(messages)
+            source = self._client.stream(langchain_messages)
+        except AIServiceException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "LLM stream initialization failed",
+                extra={"model": self._model_name, "message_count": len(messages)},
+            )
+            raise AIServiceException("Failed to start LLM stream") from exc
+
+        return _GeminiLLMStream(
+            source=cast(Iterator[Any], source),
+            model_name=self._model_name,
+            message_count=len(messages),
+        )
 
     def _to_langchain_messages(self, messages: list[ChatMessage]) -> list[BaseMessage]:
         """Convert domain messages into LangChain messages."""
@@ -95,8 +208,10 @@ class GeminiLLMProvider(LLMProvider):
         return LLMResponse(
             content=self._extract_text(response.content),
             model=self._model_name,
-            finish_reason=self._extract_finish_reason(
-                getattr(response, "response_metadata", None)
+            finish_reason=self._normalize_finish_reason(
+                self._extract_finish_reason(
+                    getattr(response, "response_metadata", None)
+                )
             ),
             usage=self._to_usage(getattr(response, "usage_metadata", None)),
         )
@@ -125,7 +240,13 @@ class GeminiLLMProvider(LLMProvider):
     def _extract_finish_reason(metadata: dict[str, Any] | None) -> str:
         """Extract the finish reason from LangChain response metadata."""
 
-        return (metadata or {}).get("finish_reason", "unknown")
+        return str((metadata or {}).get("finish_reason", "unknown"))
+
+    @classmethod
+    def _normalize_finish_reason(cls, finish_reason: str) -> str:
+        """Map vendor finish reasons onto the controlled stream vocabulary."""
+
+        return cls._FINISH_REASON_MAP.get(finish_reason, "unknown")
 
     @staticmethod
     def _extract_text(content: str | list[str | dict[str, Any]]) -> str:

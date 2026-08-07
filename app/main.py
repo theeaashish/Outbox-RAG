@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.router import api_router
+from app.api.v2 import api_v2_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -23,6 +24,7 @@ app = FastAPI(title=settings.app_name, debug=settings.app_debug, lifespan=lifesp
 register_exception_handlers(app)
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+app.include_router(api_v2_router, prefix=settings.api_v2_prefix)
 
 
 @app.get("/", tags=["Root"])

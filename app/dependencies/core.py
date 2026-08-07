@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
+from app.core.pagination import CursorCodec
 from app.core.storage import LocalFilesystemStorage, StorageService
 
 
@@ -73,3 +74,13 @@ def get_llm_provider() -> LLMProvider:
     """Return the application's chat language model provider."""
 
     return GeminiLLMProvider()
+
+
+@lru_cache
+def get_cursor_codec() -> CursorCodec:
+    """Return the application's signed cursor codec."""
+
+    return CursorCodec(
+        signing_key=settings.cursor_signing_key,
+        previous_signing_key=settings.cursor_previous_signing_key,
+    )

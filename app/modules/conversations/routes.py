@@ -46,16 +46,19 @@ def create_conversation(
 @kb_router.get(
     "/{knowledge_base_id}/conversations",
     response_model=ConversationListResponse,
+    deprecated=True,
 )
 def list_conversations(
     *,
     knowledge_base_id: UUID,
     controller: ConversationControllerDep,
+    response: Response,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> ConversationListResponse:
-    """List conversations for a knowledge base."""
+    """List conversations for a knowledge base (deprecated: use /api/v2)."""
 
+    response.headers["Deprecation"] = "true"
     return controller.list_conversations(
         knowledge_base_id=knowledge_base_id,
         limit=limit,
@@ -82,16 +85,19 @@ def get_conversation(
 @conversation_router.get(
     "/{conversation_id}/messages",
     response_model=MessageListResponse,
+    deprecated=True,
 )
 def list_messages(
     *,
     conversation_id: UUID,
     controller: ConversationControllerDep,
+    response: Response,
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> MessageListResponse:
-    """List messages for a conversation."""
+    """List messages for a conversation (deprecated: use /api/v2)."""
 
+    response.headers["Deprecation"] = "true"
     return controller.list_messages(
         conversation_id=conversation_id,
         limit=limit,

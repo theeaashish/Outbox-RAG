@@ -11,7 +11,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.ai.context.models import AssembledContext, ContextChunk
-from app.core.ai.llm.models import LLMResponse
+from app.core.ai.llm.models import (
+    LLMResponse,
+    LLMStreamCompletion,
+    LLMStreamDelta,
+    LLMUsage,
+)
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
@@ -25,9 +30,38 @@ from app.dependencies.chat import get_chat_controller
 from app.main import app
 from app.modules.chat import mapper
 from app.modules.chat.schemas import ChatRequest, ChatResponse
-from app.modules.chat.service import ChatService
+from app.modules.chat.service import (
+    ChatService,
+    ChatStreamCitations,
+    ChatStreamComplete,
+    ChatStreamEvent,
+    ChatStreamEventType,
+    ChatStreamMetadata,
+    ChatStreamToken,
+)
 from app.modules.conversations.schemas import MessageResponse
 from app.repositories.message import MessageRepository
+
+
+class _FakeLLMStream:
+    def __init__(self, events: list[object]) -> None:
+        self._events = iter(events)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.closed:
+            raise StopIteration
+        try:
+            return next(self._events)
+        except StopIteration:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_chat_request_normalizes_and_validates_content():
@@ -83,7 +117,8 @@ def _build_chat_service():
     db = MagicMock()
     conversation = Conversation(id=uuid4(), knowledge_base_id=uuid4())
     conversation_repository = MagicMock()
-    conversation_repository.get_by_id.side_effect = [conversation, conversation]
+    conversation_repository.get_by_id.return_value = conversation
+    conversation_repository.exists.return_value = True
     message_repository = MagicMock()
     message_repository.list_recent_by_conversation.return_value = [
         Message(
@@ -124,6 +159,7 @@ def _build_chat_service():
         history_message_limit=20,
         retrieval_limit=5,
         similarity_threshold=0.7,
+        stream_max_buffered_characters=65_536,
     )
     return {
         "service": service,
@@ -214,7 +250,6 @@ def test_chat_service_rolls_back_message_pair_when_commit_fails():
 def test_chat_service_rejects_missing_conversation_before_external_calls():
     dependencies = _build_chat_service()
     dependencies["conversation_repository"].get_by_id.return_value = None
-    dependencies["conversation_repository"].get_by_id.side_effect = None
 
     with pytest.raises(ResourceNotFoundException):
         dependencies["service"].send_message(
@@ -225,6 +260,212 @@ def test_chat_service_rejects_missing_conversation_before_external_calls():
     dependencies["retrieval_service"].retrieve.assert_not_called()
     dependencies["llm_provider"].generate.assert_not_called()
     dependencies["message_repository"].create.assert_not_called()
+
+
+def test_chat_service_stream_orders_events_and_persists_atomically():
+    dependencies = _build_chat_service()
+    fake_stream = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="Hel"),
+            LLMStreamDelta(content="lo"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=LLMUsage(
+                    prompt_tokens=3,
+                    completion_tokens=2,
+                    total_tokens=5,
+                ),
+            ),
+        ]
+    )
+    dependencies["llm_provider"].stream.return_value = fake_stream
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    events = list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    assert events[0].type == ChatStreamEventType.METADATA
+    assert (
+        isinstance(events[0].payload, ChatStreamMetadata)
+        and events[0].payload.conversation_id == dependencies["conversation"].id
+    )
+    assert events[1].type == ChatStreamEventType.CITATIONS
+    assert events[2].type == ChatStreamEventType.TOKEN
+    assert (
+        isinstance(events[2].payload, ChatStreamToken)
+        and events[2].payload.delta == "Hel"
+    )
+    assert events[3].type == ChatStreamEventType.TOKEN
+    assert (
+        isinstance(events[3].payload, ChatStreamToken)
+        and events[3].payload.delta == "lo"
+    )
+    assert events[4].type == ChatStreamEventType.COMPLETE
+    assert (
+        isinstance(events[4].payload, ChatStreamComplete)
+        and events[4].payload.finish_reason == "stop"
+    )
+    assert (
+        isinstance(events[4].payload, ChatStreamComplete)
+        and events[4].payload.assistant_message.content == "Hello"
+    )
+    assert dependencies["message_repository"].create.call_count == 2
+    dependencies["db"].commit.assert_called_once()
+    assert fake_stream.closed is True
+
+
+def test_chat_service_stream_persists_length_finish_reason():
+    dependencies = _build_chat_service()
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="Truncated"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="length",
+                usage=None,
+            ),
+        ]
+    )
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    events = list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    complete = events[-1]
+    assert complete.type == ChatStreamEventType.COMPLETE
+    assert (
+        isinstance(complete.payload, ChatStreamComplete)
+        and complete.payload.finish_reason == "length"
+    )
+    dependencies["db"].commit.assert_called_once()
+
+
+def test_chat_service_stream_does_not_persist_on_empty_completion():
+    dependencies = _build_chat_service()
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    with pytest.raises(AIServiceException):
+        list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    dependencies["message_repository"].create.assert_not_called()
+    dependencies["db"].commit.assert_not_called()
+
+
+def test_chat_service_stream_rejects_invalid_finish_reason():
+    dependencies = _build_chat_service()
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="Blocked"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="safety",
+                usage=None,
+            ),
+        ]
+    )
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    with pytest.raises(AIServiceException):
+        list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    dependencies["db"].commit.assert_not_called()
+
+
+def test_chat_service_stream_enforces_output_character_limit():
+    dependencies = _build_chat_service()
+    dependencies["service"]._stream_max_buffered_characters = 5
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="123456"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    with pytest.raises(AIServiceException, match="output limit"):
+        list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    dependencies["db"].commit.assert_not_called()
+
+
+def test_chat_service_stream_close_releases_provider_without_commit():
+    dependencies = _build_chat_service()
+    fake_stream = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="partial"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+    dependencies["llm_provider"].stream.return_value = fake_stream
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+    stream = dependencies["service"].stream_prepared_turn(prepared=prepared)
+
+    assert next(stream).type == ChatStreamEventType.METADATA
+    assert next(stream).type == ChatStreamEventType.CITATIONS
+    assert next(stream).type == ChatStreamEventType.TOKEN
+    stream.close()
+
+    assert fake_stream.closed is True
+    dependencies["db"].commit.assert_not_called()
+    dependencies["message_repository"].create.assert_not_called()
+
+
+def test_chat_service_stream_does_not_persist_when_conversation_deleted():
+    dependencies = _build_chat_service()
+    dependencies["conversation_repository"].exists.return_value = False
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="Hello"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+    prepared = dependencies["service"].prepare_turn(
+        conversation_id=dependencies["conversation"].id,
+        content="Current question",
+    )
+
+    with pytest.raises(ResourceNotFoundException):
+        list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    dependencies["db"].commit.assert_not_called()
 
 
 def test_chat_response_maps_citation_metadata():
@@ -261,6 +502,71 @@ def test_chat_response_maps_citation_metadata():
     assert response.sources[0].citation == 1
     assert response.sources[0].document_name == "Handbook"
     assert response.sources[0].score == 0.91
+
+
+def test_to_sse_event_sequence_contract():
+    conversation_id = uuid4()
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    context = AssembledContext(
+        query="Question",
+        block="Context",
+        chunks=[
+            ContextChunk(
+                citation=1,
+                document_id=uuid4(),
+                document_name="Handbook",
+                chunk_index=0,
+                similarity=0.9,
+                content="Source",
+            )
+        ],
+    )
+    assistant_message = Message(
+        id=uuid4(),
+        conversation_id=conversation_id,
+        role=MessageRole.ASSISTANT,
+        content="Hello",
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+    metadata = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.METADATA,
+            payload=ChatStreamMetadata(conversation_id=conversation_id, source_count=1),
+        )
+    )
+    citations = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.CITATIONS,
+            payload=ChatStreamCitations(context=context),
+        )
+    )
+    token = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.TOKEN,
+            payload=ChatStreamToken(delta="Hi"),
+        )
+    )
+    complete = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.COMPLETE,
+            payload=ChatStreamComplete(
+                assistant_message=assistant_message,
+                context=context,
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        )
+    )
+    error = mapper.to_sse_error(code="generation_failed", message="failed")
+
+    assert metadata["event"] == "metadata"
+    assert citations["event"] == "citations"
+    assert token["event"] == "token"
+    assert complete["event"] == "complete"
+    assert error["event"] == "error"
 
 
 class _StubChatController:

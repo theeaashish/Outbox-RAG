@@ -37,3 +37,21 @@ class MessageListResponse(BaseModel):
     """List of messages"""
 
     results: list[MessageResponse]
+
+
+class CursorPageInfo(BaseModel):
+    next_cursor: str | None
+    previous_cursor: str | None
+    has_next_page: bool
+    has_previous_page: bool
+    page_size: int
+
+
+class ConversationCursorPageResponse(BaseModel):
+    items: list[ConversationResponse]
+    page_info: CursorPageInfo
+
+
+class MessageCursorPageResponse(BaseModel):
+    items: list[MessageResponse]
+    page_info: CursorPageInfo
