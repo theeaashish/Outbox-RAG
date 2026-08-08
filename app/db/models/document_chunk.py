@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    JSON,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -13,6 +12,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import EMBEDDING_DIMENSION, JSONDict
@@ -35,7 +35,7 @@ class DocumentChunk(UUIDMixin, TimestampMixin, Base):
 
     # Metadata
     chunk_metadata: Mapped[JSONDict | None] = mapped_column(
-        "metadata", JSON, nullable=True
+        "metadata", JSONB, nullable=True
     )
 
     # Embedding
@@ -47,7 +47,6 @@ class DocumentChunk(UUIDMixin, TimestampMixin, Base):
     document_id: Mapped[UUID] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     document: Mapped[Document] = relationship(

@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -23,7 +31,7 @@ class Document(UUIDMixin, TimestampMixin, Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(
@@ -40,7 +48,6 @@ class Document(UUIDMixin, TimestampMixin, Base):
     knowledge_base_id: Mapped[UUID] = mapped_column(
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(
@@ -58,5 +65,10 @@ class Document(UUIDMixin, TimestampMixin, Base):
             "knowledge_base_id",
             "sha256_hash",
             name="uq_document_kb_sha256",
+        ),
+        Index(
+            "ix_documents_kb_created_at_desc",
+            "knowledge_base_id",
+            text("created_at DESC"),
         ),
     )

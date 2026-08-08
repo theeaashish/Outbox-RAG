@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Enum, ForeignKey, Index, Text
+from sqlalchemy import Enum, ForeignKey, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -36,7 +36,6 @@ class Message(UUIDMixin, TimestampMixin, Base):
     conversation_id: Mapped[UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     conversation: Mapped[Conversation] = relationship(
@@ -46,8 +45,9 @@ class Message(UUIDMixin, TimestampMixin, Base):
 
     __table_args__ = (
         Index(
-            "ix_messages_conversation_created_at",
+            "ix_messages_conversation_created_at_id_desc",
             "conversation_id",
-            "created_at",
+            text("created_at DESC"),
+            text("id DESC"),
         ),
     )
