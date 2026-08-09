@@ -60,9 +60,7 @@ class DocumentIngestionService:
 
     def _mark_processing(self, *, document: Document) -> None:
         """Mark the document as currently being processed."""
-
         document.status = DocumentStatus.PROCESSING
-        self._db.commit()
 
     def _mark_ready(self, *, document: Document) -> None:
         """Mark the document as successfully processed."""
@@ -128,6 +126,19 @@ class DocumentIngestionService:
 
         document = self._get_document(document_id=document_id)
 
+        if (
+            document.status == DocumentStatus.READY
+            and self._chunk_repository.count_by_document_id(
+                document_id=document.id
+            )
+            > 0
+        ):
+            logger.info(
+                "Document already processed",
+                extra={"document_id": str(document.id)},
+            )
+            return
+
         logger.info(
             "Document ingestion started",
             extra={
@@ -176,6 +187,8 @@ class DocumentIngestionService:
             embeddings = self._embedding_generator.embed_documents(chunks)
 
             self._ensure_embeddings_match_chunks(chunks=chunks, embeddings=embeddings)
+
+            self._chunk_repository.delete_by_document_id(document_id=document.id)
 
             self._create_chunks(
                 document=document,

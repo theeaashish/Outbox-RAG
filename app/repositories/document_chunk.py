@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, contains_eager
 
 from app.core.ai.retrieval.models import RetrievedChunk
@@ -32,6 +32,22 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
             .order_by(DocumentChunk.chunk_index.asc())
         )
         return list(self.db.scalars(statement))
+
+    def count_by_document_id(self, *, document_id: UUID) -> int:
+        """Return the number of chunks stored for a document."""
+        statement = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+        )
+        return int(self.db.scalar(statement) or 0)
+
+    def delete_by_document_id(self, *, document_id: UUID) -> None:
+        """Delete all chunks for a document in a single SQL statement."""
+        statement = delete(DocumentChunk).where(
+            DocumentChunk.document_id == document_id
+        )
+        self.db.execute(statement)
 
     def search_similar(
         self,
