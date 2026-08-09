@@ -8,7 +8,6 @@ celery_app = Celery(
     backend=settings.redis_url,
 )
 
-
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -17,4 +16,4 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
-celery_app.autodiscover_tasks(["app.worker"])
+celery_app.conf.imports = ("app.worker.tasks.document_tasks",)

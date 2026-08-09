@@ -85,3 +85,23 @@ class LocalFilesystemStorage(StorageService):
             return self._resolve_safe_path(path).is_file()
         except StorageException:
             return False
+
+    def read(self, path: str) -> bytes:
+        """Read file content from local filesystem storage."""
+
+        target = self._resolve_safe_path(path)
+
+        try:
+            return target.read_bytes()
+        except FileNotFoundError as exc:
+            logger.warning(
+                "Stored file not found",
+                extra={"path": path},
+            )
+            raise StorageException("Stored file not found") from exc
+        except Exception as exc:
+            logger.exception(
+                "Storage read failed",
+                extra={"path": path},
+            )
+            raise StorageException("Failed to read file from storage") from exc

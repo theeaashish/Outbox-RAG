@@ -4,16 +4,24 @@ from abc import ABC, abstractmethod
 
 
 class StorageService(ABC):
-    """Abstract interface for binary object storage."""
+    """Abstract interface for file storage."""
 
     @abstractmethod
     def save(self, path: str, content: bytes) -> None:
-        """Persist content at the given relative storage path."""
+        """Store file content at the given storage path."""
+        raise NotImplementedError
 
     @abstractmethod
     def delete(self, path: str) -> None:
-        """Delete content at the given relative storage path if it exists."""
+        """Delete a stored file."""
+        raise NotImplementedError
 
     @abstractmethod
     def exists(self, path: str) -> bool:
-        """Return whether content exists at the given relative storage path."""
+        """Return whether a stored file exists."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def read(self, path: str) -> bytes:
+        """Read file content from the given storage path."""
+        raise NotImplementedError
