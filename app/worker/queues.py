@@ -1,0 +1,2 @@
+class QueueNames:
+    DOCUMENTS = "documents"

@@ -92,6 +92,9 @@ class Settings(BaseSettings):
 
     cursor_previous_signing_key: str | None = Field(default=None)
 
+    # redis
+    redis_url: str = Field(default="redis://localhost:6379/0")
+
 
 @lru_cache
 def get_settings() -> Settings:
