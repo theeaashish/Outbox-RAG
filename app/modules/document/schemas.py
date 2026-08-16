@@ -15,5 +15,9 @@ class DocumentResponse(BaseModel):
     mime_type: str
     file_size: int
     status: DocumentStatus
+    last_error: str | None = None
+    retry_count: int = 0
+    processing_started_at: datetime | None = None
+    processed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -43,6 +47,21 @@ class Document(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         default=DocumentStatus.PENDING,
         server_default=DocumentStatus.PENDING.value,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     knowledge_base_id: Mapped[UUID] = mapped_column(

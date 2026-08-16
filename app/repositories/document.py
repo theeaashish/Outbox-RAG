@@ -18,6 +18,15 @@ class DocumentRepository(BaseRepository[Document]):
             model=Document,
         )
 
+    def get_for_update(
+        self,
+        *,
+        document_id: UUID,
+    ) -> Document | None:
+        """Lock and retrieve a document row for exclusive processing."""
+        statement = select(Document).where(Document.id == document_id).with_for_update()
+        return self.db.scalar(statement)
+
     def get_by_hash(
         self,
         *,
