@@ -16,3 +16,9 @@ class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+class OutboxEventType(StrEnum):
+    """Outbox event type for asynchronous task dispatch"""
+
+    DOCUMENT_PROCESS = "document.process"

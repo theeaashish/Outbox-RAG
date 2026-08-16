@@ -16,4 +16,7 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
-celery_app.conf.imports = ("app.worker.tasks.document_tasks",)
+celery_app.conf.imports = (
+    "app.worker.tasks.document_tasks",
+    "app.worker.tasks.outbox_tasks",
+)

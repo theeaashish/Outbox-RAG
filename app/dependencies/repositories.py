@@ -11,6 +11,7 @@ from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
+from app.repositories.outbox_event import OutboxEventRepository
 
 DBSession = Annotated[Session, Depends(get_db)]
 
@@ -48,3 +49,11 @@ def get_message_repository(
 ) -> MessageRepository:
     """Return a message repository."""
     return MessageRepository(db=db)
+
+
+def get_outbox_event_repository(
+    db: DBSession,
+) -> OutboxEventRepository:
+    """Return an outbox event repository."""
+
+    return OutboxEventRepository(db=db)

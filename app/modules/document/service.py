@@ -195,10 +195,10 @@ class DocumentService:
         knowledge_base_id: UUID,
         file: IncomingFile,
     ) -> Document:
-        """Upload and ingest a document into a knowledge base"""
+        """Accept and persist a document for asynchronous ingestion."""
 
         logger.info(
-            "Upload started",
+            "Upload Started",
             extra={
                 "kb_id": str(knowledge_base_id),
                 "file_name": file.filename,
@@ -206,47 +206,36 @@ class DocumentService:
             },
         )
 
-        extension = self._validator.validate(file)
+        # validate the incoming file
+        self._validator.validate(file=file)
 
+        # ensure the knowledge base exists.
         knowledge_base = self._get_knowledge_base(knowledge_base_id=knowledge_base_id)
 
-        content = file.content
-        file_hash = self._hasher.hash(content)
+        # hash the file for content-based deduplication
+        file_hash = self._hasher.hash(file.content)
 
         self._ensure_document_is_unique(
             knowledge_base_id=knowledge_base.id,
             sha256_hash=file_hash,
         )
 
-        parser = self._parser_registry.get_parser(extension)
-        logger.info(
-            "Parser selected",
-            extra={"extension": extension, "parser": type(parser).__name__},
-        )
-
-        text = parser.extract_text(content)
-        self._ensure_text_was_extracted(text=text)
-
-        chunks = self._chunker.split(text)
-        if not chunks:
-            raise ValidationException("Document produced no chunks")
-
-        logger.info("Chunks generated", extra={"chunk_count": len(chunks)})
-
-        embeddings = self._embedding_generator.embed_documents(chunks)
-        self._ensure_embeddings_match_chunks(chunks=chunks, embeddings=embeddings)
-
+        # build the storage key
         storage_path = self._build_storage_path(
             knowledge_base_id=knowledge_base.id,
             sha256_hash=file_hash,
             filename=file.filename,
         )
+
         storage_saved = False
 
         try:
-            self._storage.save(storage_path, content)
+            # save the original file.
+            self._storage.save(storage_path, file.content)
+
             storage_saved = True
 
+            # Create the document row
             document = self._create_document(
                 knowledge_base=knowledge_base,
                 file=file,
@@ -254,31 +243,39 @@ class DocumentService:
                 storage_path=storage_path,
             )
 
-            self._db.flush()
-            self._create_chunks(document=document, chunks=chunks, embeddings=embeddings)
-            self._mark_document_ready(document=document)
+            # commit the document transaction
             self._db.commit()
+
         except IntegrityError as exc:
             self._db.rollback()
+
             if storage_saved:
-                self._cleanup_storage(storage_path=storage_path)
+                self._cleanup_storage(
+                    storage_path=storage_path,
+                )
+
             raise ConflictException(
                 "Document with same content already exists"
             ) from exc
+
         except Exception:
             self._db.rollback()
+
             if storage_saved:
-                self._cleanup_storage(storage_path=storage_path)
+                self._cleanup_storage(
+                    storage_path=storage_path,
+                )
+
             raise
 
         self._db.refresh(document)
 
         logger.info(
-            "Upload completed",
+            "Document uploaded successfully",
             extra={
                 "kb_id": str(knowledge_base_id),
                 "document_id": str(document.id),
-                "chunk_count": len(chunks),
+                "size": file.size,
             },
         )
 
