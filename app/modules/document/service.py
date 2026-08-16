@@ -22,8 +22,9 @@ from app.core.exceptions import (
 from app.core.storage.base import StorageService
 from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
-from app.db.models.enums import DocumentStatus
+from app.db.models.enums import DocumentStatus, OutboxEventType
 from app.db.models.knowledge_base import KnowledgeBase
+from app.db.models.outbox_event import OutboxEvent
 from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
@@ -131,6 +132,26 @@ class DocumentService:
         )
 
         return self._document_repository.create(document)
+
+    def _create_outbox_event(
+        self,
+        *,
+        document: Document,
+    ) -> OutboxEvent:
+        """Create a durable event for asynchronous document processing."""
+
+        event = OutboxEvent(
+            event_type=OutboxEventType.DOCUMENT_PROCESS,
+            aggregate_type="document",
+            aggregate_id=document.id,
+            payload={
+                "document_id": str(document.id),
+            },
+        )
+
+        self._db.add(event)
+
+        return event
 
     def _create_chunks(
         self,
@@ -242,6 +263,8 @@ class DocumentService:
                 sha256_hash=file_hash,
                 storage_path=storage_path,
             )
+
+            self._create_outbox_event(document=document)
 
             # commit the document transaction
             self._db.commit()
