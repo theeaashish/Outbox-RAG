@@ -62,10 +62,25 @@ class OutboxEvent(UUIDMixin, TimestampMixin, Base):
         nullable=True,
     )
 
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    claim_token: Mapped[UUID | None] = mapped_column(
+        nullable=True,
+    )
+
     __table_args__ = (
         Index(
             "ix_outbox_events_unpublished",
             "published_at",
+            "created_at",
+        ),
+        Index(
+            "ix_outbox_events_claimable",
+            "published_at",
+            "claimed_at",
             "created_at",
         ),
     )
