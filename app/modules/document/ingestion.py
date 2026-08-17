@@ -199,7 +199,6 @@ class DocumentIngestionService:
             document.status = DocumentStatus.PROCESSING
             document.last_error = error[:_MAX_ERROR_LENGTH]
             document.retry_count = int(document.retry_count or 0) + 1
-            document.processing_started_at = None
             self._db.commit()
         except Exception:
             self._db.rollback()

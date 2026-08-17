@@ -146,10 +146,10 @@ def test_claim_document_state_machine_transitions() -> None:
     )
     assert service._claim_document(document=cast(Any, active_doc)) is False
 
-    # 3. Retrying document (waiting for retry: processing_started_at is None, last_error is set)
+    # 3. Retrying document (waiting for retry: processing_started_at is set, last_error is set)
     retrying_doc = _pending_document(
         status=DocumentStatus.PROCESSING,
-        processing_started_at=None,
+        processing_started_at=now,
         last_error="Temporary 429",
     )
     assert service._claim_document(document=cast(Any, retrying_doc)) is True
@@ -224,22 +224,22 @@ def test_transient_ai_failure_keeps_processing_and_increments_retry_count() -> N
     with pytest.raises(TransientAIServiceException, match="Rate limited"):
         service.process_document(document_id=document.id)
 
-    # Should remain PROCESSING for Celery retry!
+    # Should remain PROCESSING with processing_started_at preserved for Celery retry & zombie detection!
     assert document.status == DocumentStatus.PROCESSING
     assert "Rate limited" in (document.last_error or "")
     assert document.retry_count == 1
-    assert document.processing_started_at is None
+    assert document.processing_started_at is not None
     assert db.commit.call_count == 2
     db.rollback.assert_called()
 
 
 def test_retry_after_transient_failure_succeeds_and_marks_ready() -> None:
-    # State after a transient failure: status=PROCESSING, retry_count=1, last_error set, processing_started_at=None
+    # State after a transient failure: status=PROCESSING, retry_count=1, last_error set, processing_started_at preserved
     document = _pending_document(
         status=DocumentStatus.PROCESSING,
         retry_count=1,
         last_error="Rate limited / 429",
-        processing_started_at=None,
+        processing_started_at=datetime.now(UTC),
     )
     service, db, _, chunk_repository = _build_service(document=document)
 

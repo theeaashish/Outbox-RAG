@@ -314,13 +314,20 @@ GROUP BY event_type;
 ---
 
 ### 2. Identifying Zombie `PROCESSING` Documents
-If workers crash mid-execution or hit OOM, documents may remain in `PROCESSING`:
+If workers crash mid-execution or during a retry backoff pause, documents may remain in `PROCESSING`:
 
 ```sql
-SELECT id, filename, knowledge_base_id, retry_count, processing_started_at
+SELECT 
+    id, 
+    filename, 
+    knowledge_base_id, 
+    retry_count, 
+    last_error,
+    processing_started_at,
+    updated_at
 FROM documents
 WHERE status = 'processing'
-  AND processing_started_at < NOW() - INTERVAL '15 minutes';
+  AND COALESCE(processing_started_at, updated_at) < NOW() - INTERVAL '15 minutes';
 ```
 
 ---
