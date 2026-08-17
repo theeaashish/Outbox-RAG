@@ -2,6 +2,7 @@ from celery import Celery
 from kombu import Queue
 
 from app.core.config import settings
+from app.worker.queues import QueueNames
 
 celery_app = Celery(
     "basic_rag",
@@ -15,27 +16,23 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-)
-
-celery_app.conf.imports = (
-    "app.worker.tasks.document_tasks",
-    "app.worker.tasks.outbox_tasks",
-)
-
-celery_app.conf.task_queues = (
-    Queue("documents"),
-    Queue("maintenance"),
-)
-
-celery_app.conf.task_routes = {
-    "document.process": {"queue": "documents"},
-    "outbox.publish": {"queue": "maintenance"},
-}
-
-celery_app.conf.beat_schedule = {
-    "publish-outbox-events": {
-        "task": "outbox.publish",
-        "schedule": 5.0,
-        "options": {"queue": "maintenance"},
+    imports=(
+        "app.worker.tasks.document_tasks",
+        "app.worker.tasks.outbox_tasks",
+    ),
+    task_queues=(
+        Queue(QueueNames.DOCUMENTS),
+        Queue(QueueNames.MAINTENANCE),
+    ),
+    task_routes={
+        "document.process": {"queue": QueueNames.DOCUMENTS},
+        "outbox.publish": {"queue": QueueNames.MAINTENANCE},
     },
-}
+    beat_schedule={
+        "publish-outbox-events": {
+            "task": "outbox.publish",
+            "schedule": 5.0,
+            "options": {"queue": QueueNames.MAINTENANCE},
+        },
+    },
+)

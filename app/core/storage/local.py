@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import tempfile
 from pathlib import Path
+from typing import Final
 
-from app.core.exceptions import StorageException
+from app.core.exceptions import StorageException, TransientStorageException
 from app.core.storage.base import StorageService
 
 logger = logging.getLogger(__name__)
+
+_TRANSIENT_ERRNOS: Final[frozenset[int]] = frozenset(
+    {
+        errno.ETIMEDOUT,
+        errno.EBUSY,
+        errno.EAGAIN,
+        errno.EWOULDBLOCK,
+        errno.EIO,
+        errno.EINTR,
+        errno.ENOLCK,
+        errno.ESTALE,
+    }
+)
+
+
+def _is_transient_fs_error(exc: Exception) -> bool:
+    """Determine if a filesystem exception is transient based on type and errno."""
+    if isinstance(exc, (TimeoutError, InterruptedError, BlockingIOError)):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS
 
 
 class LocalFilesystemStorage(StorageService):
@@ -54,11 +76,21 @@ class LocalFilesystemStorage(StorageService):
             os.replace(temp_name, target)
         except StorageException:
             raise
+        except PermissionError as exc:
+            logger.exception(
+                "Storage save permission denied",
+                extra={"path": path, "size": len(content)},
+            )
+            raise StorageException("Permission denied saving file to storage") from exc
         except Exception as exc:
             logger.exception(
                 "Storage save failed",
                 extra={"path": path, "size": len(content)},
             )
+            if _is_transient_fs_error(exc):
+                raise TransientStorageException(
+                    "Failed to save file to storage"
+                ) from exc
             raise StorageException("Failed to save file to storage") from exc
 
         logger.info("Stored file", extra={"path": path, "size": len(content)})
@@ -74,8 +106,17 @@ class LocalFilesystemStorage(StorageService):
                 logger.info("Deleted stored file", extra={"path": path})
         except StorageException:
             raise
+        except PermissionError as exc:
+            logger.exception("Storage delete permission denied", extra={"path": path})
+            raise StorageException(
+                "Permission denied deleting file from storage"
+            ) from exc
         except Exception as exc:
             logger.exception("Storage delete failed", extra={"path": path})
+            if _is_transient_fs_error(exc):
+                raise TransientStorageException(
+                    "Failed to delete file from storage"
+                ) from exc
             raise StorageException("Failed to delete file from storage") from exc
 
     def exists(self, path: str) -> bool:
@@ -93,15 +134,24 @@ class LocalFilesystemStorage(StorageService):
 
         try:
             return target.read_bytes()
+        except StorageException:
+            raise
         except FileNotFoundError as exc:
             logger.warning(
                 "Stored file not found",
                 extra={"path": path},
             )
             raise StorageException("Stored file not found") from exc
+        except PermissionError as exc:
+            logger.exception("Storage read permission denied", extra={"path": path})
+            raise StorageException("Permission denied accessing storage file") from exc
         except Exception as exc:
             logger.exception(
                 "Storage read failed",
                 extra={"path": path},
             )
+            if _is_transient_fs_error(exc):
+                raise TransientStorageException(
+                    "Failed to read file from storage"
+                ) from exc
             raise StorageException("Failed to read file from storage") from exc

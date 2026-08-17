@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Final
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -11,6 +12,8 @@ from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+_BATCH_SIZE: Final[int] = 100
+
 
 @celery_app.task(name="outbox.publish")
 def publish_outbox_events() -> None:
@@ -20,7 +23,7 @@ def publish_outbox_events() -> None:
 
     try:
         repository = OutboxEventRepository(db=db)
-        events = repository.list_unpublished(limit=100)
+        events = repository.list_unpublished(limit=_BATCH_SIZE)
 
         for event in events:
             try:

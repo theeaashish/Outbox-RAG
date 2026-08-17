@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import SecretStr
 
+from app.core.ai.classification import classify_ai_exception
 from app.core.ai.llm.base import LLMProvider
 from app.core.ai.llm.models import (
     ChatMessage,
@@ -87,7 +88,11 @@ class _GeminiLLMStream:
                     "message_count": self._message_count,
                 },
             )
-            raise AIServiceException("LLM stream failed") from exc
+            raise classify_ai_exception(
+                exc,
+                transient_message="LLM stream temporarily unavailable",
+                permanent_message="LLM stream failed",
+            ) from exc
         finally:
             self.close()
 
@@ -142,7 +147,11 @@ class GeminiLLMProvider(LLMProvider):
                 "LLM generation failed.",
                 extra={"model": self._model_name, "message_count": len(messages)},
             )
-            raise AIServiceException("Failed to generate LLM response") from exc
+            raise classify_ai_exception(
+                exc,
+                transient_message="LLM generation temporarily unavailable",
+                permanent_message="Failed to generate LLM response",
+            ) from exc
 
         llm_response = self._to_response(response)
 
@@ -166,7 +175,11 @@ class GeminiLLMProvider(LLMProvider):
                 "LLM stream initialization failed",
                 extra={"model": self._model_name, "message_count": len(messages)},
             )
-            raise AIServiceException("Failed to start LLM stream") from exc
+            raise classify_ai_exception(
+                exc,
+                transient_message="LLM stream temporarily unavailable",
+                permanent_message="Failed to start LLM stream",
+            ) from exc
 
         return _GeminiLLMStream(
             source=cast(Iterator[Any], source),

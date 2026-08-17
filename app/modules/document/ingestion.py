@@ -4,8 +4,10 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.ai.chunking.base import TextChunker
@@ -13,10 +15,15 @@ from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.exceptions import (
     AIServiceException,
+    DatabaseException,
     ResourceNotFoundException,
+    TransientAIServiceException,
+    TransientDatabaseException,
+    TransientStorageException,
     ValidationException,
 )
 from app.core.storage.base import StorageService
+from app.db.classification import classify_database_exception
 from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
 from app.db.models.enums import DocumentStatus
@@ -26,7 +33,7 @@ from app.repositories.document_chunk import DocumentChunkRepository
 logger = logging.getLogger(__name__)
 
 # Keep stored error text bounded so a pathological traceback cannot bloat rows.
-_MAX_ERROR_LENGTH = 4000
+_MAX_ERROR_LENGTH: Final[int] = 4000
 
 
 class DocumentIngestionService:
@@ -70,6 +77,7 @@ class DocumentIngestionService:
         document.status = DocumentStatus.PROCESSING
         document.processing_started_at = now
         document.processed_at = None
+        document.last_error = None
 
     def _mark_ready(self, *, document: Document) -> None:
         """Mark the document as successfully processed."""
@@ -84,6 +92,7 @@ class DocumentIngestionService:
         document.status = DocumentStatus.FAILED
         document.last_error = error[:_MAX_ERROR_LENGTH]
         document.retry_count = int(document.retry_count or 0) + 1
+        document.processing_started_at = None
 
     @staticmethod
     def _ensure_text_was_extracted(*, text: str) -> None:
@@ -117,7 +126,7 @@ class DocumentIngestionService:
             document_id=document_id
         )
         if persisted_count != expected_count:
-            raise AIServiceException(
+            raise DatabaseException(
                 "Persisted chunk count mismatch: "
                 f"expected {expected_count}, got {persisted_count}"
             )
@@ -153,13 +162,6 @@ class DocumentIngestionService:
         Returns True when the document was claimed for processing.
         """
 
-        if document.status == DocumentStatus.PROCESSING:
-            logger.info(
-                "Document already processing",
-                extra={"document_id": str(document.id)},
-            )
-            return False
-
         if document.status == DocumentStatus.READY:
             chunk_count = self._chunk_repository.count_by_document_id(
                 document_id=document.id
@@ -174,12 +176,40 @@ class DocumentIngestionService:
                 )
                 return False
 
+        if (
+            document.status == DocumentStatus.PROCESSING
+            and document.processing_started_at is not None
+            and document.last_error is None
+        ):
+            logger.info(
+                "Document already processing",
+                extra={"document_id": str(document.id)},
+            )
+            return False
+
         self._mark_processing(document=document)
         self._db.commit()
         return True
 
+    def _record_transient_failure(self, *, document_id: UUID, error: str) -> None:
+        """Best-effort persistence of transient failure metadata while keeping document PROCESSING."""
+
+        try:
+            document = self._get_document_for_update(document_id=document_id)
+            document.status = DocumentStatus.PROCESSING
+            document.last_error = error[:_MAX_ERROR_LENGTH]
+            document.retry_count = int(document.retry_count or 0) + 1
+            document.processing_started_at = None
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            logger.exception(
+                "Failed to record transient document error",
+                extra={"document_id": str(document_id)},
+            )
+
     def _fail_document(self, *, document_id: UUID, error: str) -> None:
-        """Best-effort transition of a document to FAILED after a rollback."""
+        """Best-effort transition of a document to FAILED after a permanent failure or rollback."""
 
         try:
             document = self._get_document_for_update(document_id=document_id)
@@ -201,21 +231,22 @@ class DocumentIngestionService:
         """
 
         started_at = time.perf_counter()
-        document = self._get_document_for_update(document_id=document_id)
-
-        if not self._claim_document(document=document):
-            return
-
-        logger.info(
-            "Document ingestion started",
-            extra={
-                "document_id": str(document.id),
-                "status": document.status.value,
-                "retry_count": document.retry_count,
-            },
-        )
 
         try:
+            document = self._get_document_for_update(document_id=document_id)
+
+            if not self._claim_document(document=document):
+                return
+
+            logger.info(
+                "Document ingestion started",
+                extra={
+                    "document_id": str(document.id),
+                    "status": document.status.value,
+                    "retry_count": document.retry_count,
+                },
+            )
+
             content = self._storage.read(document.storage_path)
 
             extension = Path(document.filename).suffix.lower()
@@ -277,18 +308,44 @@ class DocumentIngestionService:
 
             self._db.commit()
 
+        except ResourceNotFoundException:
+            self._db.rollback()
+            raise
+
         except Exception as exc:
             self._db.rollback()
-            self._fail_document(document_id=document_id, error=str(exc))
+
+            error_to_raise: Exception = exc
+            if isinstance(exc, SQLAlchemyError):
+                error_to_raise = classify_database_exception(exc)
+
+            is_transient = isinstance(
+                error_to_raise,
+                (
+                    TransientAIServiceException,
+                    TransientDatabaseException,
+                    TransientStorageException,
+                ),
+            )
+
+            if is_transient:
+                self._record_transient_failure(
+                    document_id=document_id, error=str(error_to_raise)
+                )
+            else:
+                self._fail_document(document_id=document_id, error=str(error_to_raise))
 
             logger.exception(
                 "Document ingestion failed",
                 extra={
                     "document_id": str(document_id),
                     "duration_ms": int((time.perf_counter() - started_at) * 1000),
+                    "is_transient": is_transient,
                 },
             )
 
+            if error_to_raise is not exc:
+                raise error_to_raise from exc
             raise
 
         duration_ms = int((time.perf_counter() - started_at) * 1000)

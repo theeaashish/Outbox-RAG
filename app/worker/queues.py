@@ -1,2 +1,8 @@
+from typing import Final
+
+
 class QueueNames:
-    DOCUMENTS = "documents"
+    """Named Celery task queues used across workers."""
+
+    DOCUMENTS: Final[str] = "documents"
+    MAINTENANCE: Final[str] = "maintenance"

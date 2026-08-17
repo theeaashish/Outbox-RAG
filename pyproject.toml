@@ -45,4 +45,7 @@ reportImplicitOverride = false
 reportUnusedCallResult = false
 reportImportCycles = false
 
+[tool.ruff]
+target-version = "py312"
+
 

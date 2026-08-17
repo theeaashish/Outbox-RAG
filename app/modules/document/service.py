@@ -7,33 +7,27 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.ai.chunking.base import TextChunker
-from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.document.hasher import FileHasher
 from app.core.document.incoming_file import IncomingFile
-from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
 from app.core.exceptions import (
-    AIServiceException,
     ConflictException,
     ResourceNotFoundException,
     ValidationException,
 )
 from app.core.storage.base import StorageService
 from app.db.models.document import Document
-from app.db.models.document_chunk import DocumentChunk
 from app.db.models.enums import DocumentStatus, OutboxEventType
 from app.db.models.knowledge_base import KnowledgeBase
 from app.db.models.outbox_event import OutboxEvent
 from app.repositories.document import DocumentRepository
-from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 
 logger = logging.getLogger(__name__)
 
 
 class DocumentService:
-    """Application service responsible for document ingestion."""
+    """Application service responsible for document upload and persistence."""
 
     def __init__(
         self,
@@ -41,26 +35,15 @@ class DocumentService:
         db: Session,
         knowledge_base_repository: KnowledgeBaseRepository,
         document_repository: DocumentRepository,
-        chunk_repository: DocumentChunkRepository,
-        parser_registry: DocumentParserRegistry,
         validator: UploadValidator,
         hasher: FileHasher,
-        chunker: TextChunker,
-        embedding_generator: EmbeddingGenerator,
         storage: StorageService,
     ) -> None:
         self._db = db
-
         self._knowledge_base_repository = knowledge_base_repository
         self._document_repository = document_repository
-        self._chunk_repository = chunk_repository
-
-        self._parser_registry = parser_registry
-
         self._validator = validator
         self._hasher = hasher
-        self._chunker = chunker
-        self._embedding_generator = embedding_generator
         self._storage = storage
 
     def _get_knowledge_base(self, *, knowledge_base_id: UUID) -> KnowledgeBase:
@@ -74,7 +57,7 @@ class DocumentService:
     def _ensure_document_is_unique(
         self, *, knowledge_base_id: UUID, sha256_hash: str
     ) -> None:
-        """Ensure document is unique"""
+        """Ensure document is unique within the knowledge base."""
 
         existing_document = self._document_repository.get_by_hash(
             knowledge_base_id=knowledge_base_id,
@@ -83,20 +66,6 @@ class DocumentService:
 
         if existing_document is not None:
             raise ValidationException("Document with same content already exists")
-
-    def _ensure_text_was_extracted(self, *, text: str) -> None:
-        """Ensure the parser extracted meaningful text"""
-
-        if not text.strip():
-            raise ValidationException("Parser did not extract any text")
-
-    def _ensure_embeddings_match_chunks(
-        self, *, chunks: list[str], embeddings: list[list[float]]
-    ) -> None:
-        """Ensure every chunk has a corresponding embedding"""
-
-        if len(chunks) != len(embeddings):
-            raise AIServiceException("Chunk and embedding count mismatch")
 
     def _build_storage_path(
         self,
@@ -152,52 +121,6 @@ class DocumentService:
         self._db.add(event)
 
         return event
-
-    def _create_chunks(
-        self,
-        *,
-        document: Document,
-        chunks: list[str],
-        embeddings: list[list[float]],
-    ) -> None:
-        """Create and persist document chunks with embeddings"""
-
-        for index, (chunk, embedding) in enumerate(
-            zip(chunks, embeddings, strict=True)
-        ):
-            doc_chunk = DocumentChunk(
-                document_id=document.id,
-                chunk_index=index,
-                content=chunk,
-                embedding=embedding,
-                char_start=None,
-                char_end=None,
-                chunk_metadata=None,
-            )
-            self._chunk_repository.create(doc_chunk)
-
-    def _mark_document_ready(
-        self,
-        *,
-        document: Document,
-    ) -> None:
-        """Mark the document as successfully processed."""
-
-        document.status = DocumentStatus.READY
-
-    def _mark_document_failed(
-        self,
-        *,
-        document: Document,
-    ) -> None:
-        """
-        Mark the document as failed.
-
-        Reserved for a future async ingestion worker that creates a row
-        before processing completes. Not used on the sync request path.
-        """
-
-        document.status = DocumentStatus.FAILED
 
     def _cleanup_storage(self, *, storage_path: str) -> None:
         """Best-effort delete of a stored file after a failed DB commit."""

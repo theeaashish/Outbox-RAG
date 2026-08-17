@@ -79,12 +79,8 @@ def get_document_service(
     db: DBSession,
     knowledge_base_repository: KnowledgeBaseRepositoryDep,
     document_repository: DocumentRepositoryDep,
-    chunk_repository: DocumentChunkRepositoryDep,
-    parser_registry: ParserRegistryDep,
     validator: UploadValidatorDep,
     hasher: FileHasherDep,
-    chunker: TextChunkerDep,
-    embedding_generator: EmbeddingGeneratorDep,
     storage: StorageServiceDep,
 ) -> DocumentService:
     """Return a configured DocumentService."""
@@ -93,12 +89,8 @@ def get_document_service(
         db=db,
         knowledge_base_repository=knowledge_base_repository,
         document_repository=document_repository,
-        chunk_repository=chunk_repository,
-        parser_registry=parser_registry,
         validator=validator,
         hasher=hasher,
-        chunker=chunker,
-        embedding_generator=embedding_generator,
         storage=storage,
     )
 

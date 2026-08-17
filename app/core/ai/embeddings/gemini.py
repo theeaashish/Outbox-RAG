@@ -5,6 +5,7 @@ import logging
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from pydantic import SecretStr
 
+from app.core.ai.classification import classify_ai_exception
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.config import settings
 from app.core.constants import EMBEDDING_DIMENSION
@@ -47,7 +48,11 @@ class GeminiEmbeddingGenerator(EmbeddingGenerator):
                 "Embedding generation failed",
                 extra={"model": self._model_name, "count": 1},
             )
-            raise AIServiceException("Embedding generation failed") from exc
+            raise classify_ai_exception(
+                exc,
+                transient_message="Embedding service temporarily unavailable",
+                permanent_message="Embedding generation failed",
+            ) from exc
 
         logger.info(
             "Embedding generated",
@@ -69,7 +74,11 @@ class GeminiEmbeddingGenerator(EmbeddingGenerator):
                 "Embedding generation failed",
                 extra={"model": self._model_name, "count": len(texts)},
             )
-            raise AIServiceException("Embedding generation failed") from exc
+            raise classify_ai_exception(
+                exc,
+                transient_message="Embedding service temporarily unavailable",
+                permanent_message="Embedding generation failed",
+            ) from exc
 
         logger.info(
             "Embeddings generated",

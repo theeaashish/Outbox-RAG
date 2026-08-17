@@ -35,7 +35,7 @@ class UnsupportedDocumentTypeError(ValidationException):
         super().__init__(message=f"Unsupported document type: {extension}")
 
 
-class NotFoundException(AppException):
+class ResourceNotFoundException(AppException):
     """Raised when a resource is not found"""
 
     def __init__(self, message: str) -> None:
@@ -43,6 +43,10 @@ class NotFoundException(AppException):
             message=message,
             status_code=HTTPStatus.NOT_FOUND,
         )
+
+
+class NotFoundException(ResourceNotFoundException):
+    """Alias for ResourceNotFoundException."""
 
 
 class ConflictException(AppException):
@@ -85,16 +89,6 @@ class AIServiceException(AppException):
         )
 
 
-class ResourceNotFoundException(AppException):
-    """Raised when a resource is not found"""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(
-            message=message,
-            status_code=HTTPStatus.NOT_FOUND,
-        )
-
-
 class DatabaseException(AppException):
     """Raised when a database operation fails"""
 
@@ -123,6 +117,18 @@ class DocumentParsingException(AppException):
             message=message,
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         )
+
+
+class TransientAIServiceException(AIServiceException):
+    """Raised when an AI provider failure may succeed on retry."""
+
+
+class TransientDatabaseException(DatabaseException):
+    """Raised when a database failure may succeed on retry."""
+
+
+class TransientStorageException(StorageException):
+    """Raised when a storage failure may succeed on retry."""
 
 
 async def app_exception_handler(request: Request, exc: Exception) -> JSONResponse:
