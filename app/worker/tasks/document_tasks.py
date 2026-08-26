@@ -73,6 +73,8 @@ class DocumentProcessTask(Task):
     base=DocumentProcessTask,
     bind=True,
     name="document.process",
+    acks_late=True,
+    reject_on_worker_lost=True,
     autoretry_for=(
         TransientAIServiceException,
         TransientDatabaseException,

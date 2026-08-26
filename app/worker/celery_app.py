@@ -2,6 +2,7 @@ from celery import Celery
 from kombu import Queue
 
 from app.core.config import settings
+from app.core.constants import CELERY_VISIBILITY_TIMEOUT_SECONDS
 from app.worker.queues import QueueNames
 
 celery_app = Celery(
@@ -16,6 +17,7 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    worker_prefetch_multiplier=1,
     imports=(
         "app.worker.tasks.document_tasks",
         "app.worker.tasks.outbox_tasks",
@@ -36,3 +38,11 @@ celery_app.conf.update(
         },
     },
 )
+
+celery_app.conf.broker_transport_options = {
+    "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
+}
+
+celery_app.conf.result_backend_transport_options = {
+    "visibility_timeout": CELERY_VISIBILITY_TIMEOUT_SECONDS,
+}

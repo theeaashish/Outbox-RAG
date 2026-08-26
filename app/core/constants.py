@@ -32,3 +32,6 @@ PERMANENT_AI_STATUS_CODES: Final[frozenset[int]] = frozenset(
     }
 )
 """HTTP status codes representing permanent, non-retryable AI client errors."""
+
+
+CELERY_VISIBILITY_TIMEOUT_SECONDS: Final[int] = 3600
