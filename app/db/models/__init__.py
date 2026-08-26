@@ -12,6 +12,7 @@ from app.db.models.enums import (
 from app.db.models.knowledge_base import KnowledgeBase
 from app.db.models.message import Message
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.password_credential import PasswordCredential
 from app.db.models.session import Session
 from app.db.models.user import User
 
@@ -27,6 +28,7 @@ __all__ = [
     "MessageRole",
     "OutboxEvent",
     "OutboxEventType",
+    "PasswordCredential",
     "Session",
     "User",
     "UserStatus",

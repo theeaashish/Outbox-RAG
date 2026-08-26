@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.db.models.auth_identity import AuthIdentity
     from app.db.models.conversation import Conversation
     from app.db.models.knowledge_base import KnowledgeBase
+    from app.db.models.password_credential import PasswordCredential
     from app.db.models.session import Session
 
 
@@ -71,6 +72,14 @@ class User(UUIDMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="raise",
+    )
+
+    password_credential: Mapped[PasswordCredential | None] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+        uselist=False,
     )
 
     knowledge_bases: Mapped[list[KnowledgeBase]] = relationship(
