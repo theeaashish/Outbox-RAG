@@ -119,6 +119,16 @@ class DocumentParsingException(AppException):
         )
 
 
+class AuthenticationException(AppException):
+    """Raised when authentication fails."""
+
+    def __init__(self, message: str = "Authentication failed") -> None:
+        super().__init__(
+            message=message,
+            status_code=HTTPStatus.UNAUTHORIZED,
+        )
+
+
 class TransientAIServiceException(AIServiceException):
     """Raised when an AI provider failure may succeed on retry."""
 
