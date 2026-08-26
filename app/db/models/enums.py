@@ -22,3 +22,15 @@ class OutboxEventType(StrEnum):
     """Outbox event type for asynchronous task dispatch"""
 
     DOCUMENT_PROCESS = "document.process"
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    DISABLED = "disabled"
+
+
+class AuthProvider(StrEnum):
+    PASSWORD = "password"
+    GOOGLE = "google"
+    GITHUB = "github"
