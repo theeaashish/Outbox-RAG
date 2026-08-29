@@ -12,6 +12,8 @@ from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.outbox_event import OutboxEventRepository
+from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.user import UserRepository
 
 DBSession = Annotated[Session, Depends(get_db)]
 
@@ -57,3 +59,14 @@ def get_outbox_event_repository(
     """Return an outbox event repository."""
 
     return OutboxEventRepository(db=db)
+
+
+def get_user_repository(
+    db: DBSession,
+) -> UserRepository:
+    return UserRepository(db=db)
+
+
+def get_password_credential_repository(db: DBSession) -> PasswordCredentialRepository:
+
+    return PasswordCredentialRepository(db=db)

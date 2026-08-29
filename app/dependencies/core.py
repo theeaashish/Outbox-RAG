@@ -11,6 +11,7 @@ from app.core.ai.llm.base import LLMProvider
 from app.core.ai.llm.gemini import GeminiLLMProvider
 from app.core.ai.prompting.base import PromptBuilder
 from app.core.ai.prompting.rag import RAGPromptBuilder
+from app.core.auth.passwords import PasswordHasherService
 from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
@@ -84,3 +85,8 @@ def get_cursor_codec() -> CursorCodec:
         signing_key=settings.cursor_signing_key,
         previous_signing_key=settings.cursor_previous_signing_key,
     )
+
+
+@lru_cache
+def get_password_hasher() -> PasswordHasherService:
+    return PasswordHasherService()

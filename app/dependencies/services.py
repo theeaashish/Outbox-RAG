@@ -6,6 +6,7 @@ from fastapi import Depends
 
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
+from app.core.auth.passwords import PasswordHasherService
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
@@ -14,6 +15,7 @@ from app.dependencies.core import (
     get_document_parser_registry,
     get_embedding_generator,
     get_file_hasher,
+    get_password_hasher,
     get_storage_service,
     get_text_chunker,
     get_upload_validator,
@@ -23,11 +25,16 @@ from app.dependencies.repositories import (
     get_document_chunk_repository,
     get_document_repository,
     get_knowledge_base_repository,
+    get_password_credential_repository,
+    get_user_repository,
 )
+from app.modules.auth.service import AuthService
 from app.modules.document.service import DocumentService
 from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
+from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.user import UserRepository
 
 KnowledgeBaseRepositoryDep = Annotated[
     KnowledgeBaseRepository,
@@ -74,6 +81,21 @@ StorageServiceDep = Annotated[
     Depends(get_storage_service),
 ]
 
+UserRepositoryDep = Annotated[
+    UserRepository,
+    Depends(get_user_repository),
+]
+
+PasswordCredentialRepositoryDep = Annotated[
+    PasswordCredentialRepository,
+    Depends(get_password_credential_repository),
+]
+
+PasswordHasherDep = Annotated[
+    PasswordHasherService,
+    Depends(get_password_hasher),
+]
+
 
 def get_document_service(
     db: DBSession,
@@ -98,4 +120,26 @@ def get_document_service(
 DocumentServiceDep = Annotated[
     DocumentService,
     Depends(get_document_service),
+]
+
+
+def get_auth_service(
+    db: DBSession,
+    user_repository: UserRepositoryDep,
+    password_credential_repository: PasswordCredentialRepositoryDep,
+    password_hasher: PasswordHasherDep,
+) -> AuthService:
+    """Return a configured AuthService."""
+
+    return AuthService(
+        db=db,
+        user_repository=user_repository,
+        password_credential_repository=password_credential_repository,
+        password_hasher=password_hasher,
+    )
+
+
+AuthServiceDep = Annotated[
+    AuthService,
+    Depends(get_auth_service),
 ]
