@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
@@ -25,3 +27,8 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
         """Check if a knowledge base with the given name exists."""
         statement = select(exists().where(KnowledgeBase.name == name))
         return bool(self.db.scalar(statement))
+
+    def get_by_project_id(self, *, project_id: UUID) -> KnowledgeBase | None:
+        """Get the knowledge base associated with a project."""
+        statement = select(KnowledgeBase).where(KnowledgeBase.project_id == project_id)
+        return self.db.scalar(statement)

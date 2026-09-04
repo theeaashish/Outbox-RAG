@@ -28,21 +28,29 @@ from app.dependencies.repositories import (
     get_document_repository,
     get_knowledge_base_repository,
     get_password_credential_repository,
+    get_project_repository,
     get_session_repository,
     get_user_repository,
 )
 from app.modules.auth.service import AuthService
 from app.modules.document.service import DocumentService
+from app.modules.projects.service import ProjectService
 from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.project import ProjectRepository
 from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
 
 KnowledgeBaseRepositoryDep = Annotated[
     KnowledgeBaseRepository,
     Depends(get_knowledge_base_repository),
+]
+
+ProjectRepositoryDep = Annotated[
+    ProjectRepository,
+    Depends(get_project_repository),
 ]
 
 DocumentRepositoryDep = Annotated[
@@ -129,6 +137,25 @@ def get_document_service(
         hasher=hasher,
         storage=storage,
     )
+
+
+def get_project_service(
+    db: DBSession,
+    project_repository: ProjectRepositoryDep,
+    knowledge_base_repository: KnowledgeBaseRepositoryDep,
+) -> ProjectService:
+    """Return a configured ProjectService."""
+    return ProjectService(
+        db=db,
+        project_repository=project_repository,
+        knowledge_base_repository=knowledge_base_repository,
+    )
+
+
+ProjectServiceDep = Annotated[
+    ProjectService,
+    Depends(get_project_service),
+]
 
 
 DocumentServiceDep = Annotated[

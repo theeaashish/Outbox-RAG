@@ -11,6 +11,7 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from app.db.models.knowledge_base import KnowledgeBase
     from app.db.models.message import Message
+    from app.db.models.project import Project
     from app.db.models.user import User
 
 
@@ -24,12 +25,22 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
     knowledge_base_id: Mapped[UUID] = mapped_column(
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
     )
 
     user: Mapped[User] = relationship(
+        back_populates="conversations",
+        lazy="raise",
+    )
+
+    project: Mapped[Project] = relationship(
         back_populates="conversations",
         lazy="raise",
     )

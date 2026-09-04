@@ -17,6 +17,7 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from app.db.models.conversation import Conversation
     from app.db.models.document import Document
+    from app.db.models.project import Project
     from app.db.models.user import User
 
 
@@ -30,11 +31,21 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped[User] = relationship(
         back_populates="knowledge_bases",
+        lazy="raise",
+    )
+
+    project: Mapped[Project] = relationship(
+        back_populates="knowledge_base",
         lazy="raise",
     )
 
@@ -55,6 +66,10 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
             "user_id",
             "name",
             name="uq_knowledge_bases_user_name",
+        ),
+        UniqueConstraint(
+            "project_id",
+            name="uq_knowledge_bases_project_id",
         ),
         Index(
             "ix_knowledge_bases_user_id",

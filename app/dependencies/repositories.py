@@ -13,6 +13,7 @@ from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.outbox_event import OutboxEventRepository
 from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.project import ProjectRepository
 from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
 
@@ -66,6 +67,13 @@ def get_user_repository(
     db: DBSession,
 ) -> UserRepository:
     return UserRepository(db=db)
+
+
+def get_project_repository(
+    db: DBSession,
+) -> ProjectRepository:
+    """Return a project repository."""
+    return ProjectRepository(db=db)
 
 
 def get_password_credential_repository(db: DBSession) -> PasswordCredentialRepository:

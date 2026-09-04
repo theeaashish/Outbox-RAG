@@ -10,12 +10,14 @@ from app.dependencies.repositories import (
     DBSession,
     get_conversation_repository,
     get_message_repository,
+    get_project_repository,
 )
 from app.dependencies.services import KnowledgeBaseRepositoryDep
 from app.modules.conversations.controller import ConversationController
 from app.modules.conversations.service import ConversationService
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
+from app.repositories.project import ProjectRepository
 
 ConversationRepositoryDep = Annotated[
     ConversationRepository,
@@ -27,6 +29,11 @@ MessageRepositoryDep = Annotated[
     Depends(get_message_repository),
 ]
 
+ProjectRepositoryDep = Annotated[
+    ProjectRepository,
+    Depends(get_project_repository),
+]
+
 CursorCodecDep = Annotated[CursorCodec, Depends(get_cursor_codec)]
 
 
@@ -34,6 +41,7 @@ def get_conversation_service(
     db: DBSession,
     conversation_repository: ConversationRepositoryDep,
     knowledge_base_repository: KnowledgeBaseRepositoryDep,
+    project_repository: ProjectRepositoryDep,
     message_repository: MessageRepositoryDep,
     cursor_codec: CursorCodecDep,
 ) -> ConversationService:
@@ -43,6 +51,7 @@ def get_conversation_service(
         db=db,
         conversation_repository=conversation_repository,
         knowledge_base_repository=knowledge_base_repository,
+        project_repository=project_repository,
         message_repository=message_repository,
         cursor_codec=cursor_codec,
     )

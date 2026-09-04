@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 
+from app.dependencies.auth import AuthenticatedUserIdDep
 from app.dependencies.conversations import ConversationControllerDep
 from app.modules.conversations.schemas import (
     ConversationListResponse,
@@ -16,6 +17,11 @@ kb_router = APIRouter(
     tags=["Conversations"],
 )
 
+project_router = APIRouter(
+    prefix="/projects",
+    tags=["Conversations"],
+)
+
 conversation_router = APIRouter(
     prefix="/conversations",
     tags=["Conversations"],
@@ -23,6 +29,7 @@ conversation_router = APIRouter(
 
 router = APIRouter()
 router.include_router(kb_router)
+router.include_router(project_router)
 router.include_router(conversation_router)
 
 
@@ -40,6 +47,24 @@ def create_conversation(
 
     return controller.create_conversation(
         knowledge_base_id=knowledge_base_id,
+    )
+
+
+@project_router.post(
+    "/{project_id}/conversations",
+    response_model=ConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_conversation(
+    *,
+    project_id: UUID,
+    controller: ConversationControllerDep,
+    user_id: AuthenticatedUserIdDep,
+) -> ConversationResponse:
+    """Create a conversation for a project and its knowledge base."""
+    return controller.create_project_conversation(
+        user_id=user_id,
+        project_id=project_id,
     )
 
 

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.db.models.conversation import Conversation
     from app.db.models.knowledge_base import KnowledgeBase
     from app.db.models.password_credential import PasswordCredential
+    from app.db.models.project import Project
     from app.db.models.session import Session
 
 
@@ -83,6 +84,13 @@ class User(UUIDMixin, TimestampMixin, Base):
     )
 
     knowledge_bases: Mapped[list[KnowledgeBase]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+    )
+
+    projects: Mapped[list[Project]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

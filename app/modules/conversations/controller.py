@@ -26,14 +26,28 @@ class ConversationController:
     def create_conversation(
         self,
         *,
+        user_id: UUID | None = None,
         knowledge_base_id: UUID,
     ) -> ConversationResponse:
         """Create a new conversation."""
 
         conversation = self._conversation_service.create_conversation(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
         )
 
+        return mapper.to_conversation_response(conversation)
+
+    def create_project_conversation(
+        self,
+        *,
+        user_id: UUID,
+        project_id: UUID,
+    ) -> ConversationResponse:
+        conversation = self._conversation_service.create_project_conversation(
+            user_id=user_id,
+            project_id=project_id,
+        )
         return mapper.to_conversation_response(conversation)
 
     def get_conversation(

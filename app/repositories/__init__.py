@@ -6,6 +6,7 @@ from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.outbox_event import OutboxEventRepository
 from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "MessageRepository",
     "OutboxEventRepository",
     "PasswordCredentialRepository",
+    "ProjectRepository",
     "UserRepository",
 ]
