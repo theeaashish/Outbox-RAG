@@ -13,6 +13,7 @@ from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.outbox_event import OutboxEventRepository
 from app.repositories.password_credential import PasswordCredentialRepository
+from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
 
 DBSession = Annotated[Session, Depends(get_db)]
@@ -70,3 +71,11 @@ def get_user_repository(
 def get_password_credential_repository(db: DBSession) -> PasswordCredentialRepository:
 
     return PasswordCredentialRepository(db=db)
+
+
+def get_session_repository(
+    db: DBSession,
+) -> SessionRepository:
+    """Return a session repository."""
+
+    return SessionRepository(db=db)

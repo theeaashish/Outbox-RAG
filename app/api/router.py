@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.modules.auth import router as auth_router
+from app.modules.auth.routes import router as auth_router
 from app.modules.chat.routes import router as chat_router
 from app.modules.conversations import router as conversation_router
 from app.modules.document.routes import router as document_router
