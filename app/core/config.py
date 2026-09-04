@@ -96,6 +96,16 @@ class Settings(BaseSettings):
 
     session_lifetime_days: int = Field(default=30, ge=1)
 
+    session_cookie_name: str = "session"
+
+    session_cookie_secure: bool = False
+
+    session_cookie_httponly: bool = True
+
+    session_cookie_samesite: str = "lax"
+
+    session_cookie_path: str = "/"
+
     # redis
     redis_url: str = Field(default="redis://localhost:6379/0")
 
