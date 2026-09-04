@@ -92,6 +92,10 @@ class Settings(BaseSettings):
 
     cursor_previous_signing_key: str | None = Field(default=None)
 
+    # auth
+
+    session_lifetime_days: int = Field(default=30, ge=1)
+
     # redis
     redis_url: str = Field(default="redis://localhost:6379/0")
 

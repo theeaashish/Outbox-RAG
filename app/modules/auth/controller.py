@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
+from app.core.config import settings
 from app.modules.auth import mapper
-from app.modules.auth.schemas import RegisterRequest, RegisterResponse
-from app.modules.auth.service import AuthService
+from app.modules.auth.schemas import (
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    RegisterResponse,
+)
+from app.modules.auth.service import AuthenticatedSession, AuthService
 
 
 class AuthController:
@@ -15,7 +23,30 @@ class AuthController:
         """Register a new local user."""
 
         user = self._auth_service.register(
-            email=request.email, password=request.password, name=request.name
+            email=request.email,
+            password=request.password,
+            name=request.name,
         )
 
         return mapper.to_register_response(user)
+
+    def login(
+        self,
+        request: LoginRequest,
+        *,
+        user_agent: str | None = None,
+        ip_address: str | None = None,
+    ) -> tuple[LoginResponse, AuthenticatedSession]:
+        """Authenticate a user and return the mapped response alongside the internal session."""
+
+        authenticated_session = self._auth_service.login(
+            email=request.email,
+            password=request.password,
+            user_agent=user_agent,
+            ip_address=ip_address,
+            session_lifetime=timedelta(days=settings.session_lifetime_days),
+        )
+
+        response = mapper.to_login_response(authenticated_session.user)
+
+        return response, authenticated_session

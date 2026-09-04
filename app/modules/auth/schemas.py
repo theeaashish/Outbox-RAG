@@ -28,3 +28,23 @@ class RegisterResponse(BaseModel):
     id: UUID
     email: EmailStr
     name: str | None
+
+
+class LoginRequest(BaseModel):
+    """Request payload for user login."""
+
+    email: EmailStr
+    password: str = Field(
+        min_length=12,
+        max_length=1024,
+    )
+
+
+class LoginResponse(BaseModel):
+    """Response returned after successful authentication."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    email: EmailStr
+    name: str | None

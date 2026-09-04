@@ -6,7 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models.session import Session as SessionModel
 from app.repositories.base import BaseRepository
@@ -30,6 +30,27 @@ class SessionRepository(BaseRepository[SessionModel]):
             SessionModel.token_hash == token_hash,
             SessionModel.revoked_at.is_(None),
             SessionModel.expires_at > now,
+        )
+
+        return self.db.scalar(statement)
+
+    def get_active_with_user_by_token_hash(
+        self,
+        *,
+        token_hash: str,
+    ) -> SessionModel | None:
+        """Return an active, non-expired session with its user eagerly loaded."""
+
+        now = datetime.now(UTC)
+
+        statement = (
+            select(SessionModel)
+            .options(joinedload(SessionModel.user))
+            .where(
+                SessionModel.token_hash == token_hash,
+                SessionModel.revoked_at.is_(None),
+                SessionModel.expires_at > now,
+            )
         )
 
         return self.db.scalar(statement)

@@ -12,6 +12,7 @@ from app.core.ai.llm.gemini import GeminiLLMProvider
 from app.core.ai.prompting.base import PromptBuilder
 from app.core.ai.prompting.rag import RAGPromptBuilder
 from app.core.auth.passwords import PasswordHasherService
+from app.core.auth.session import SessionTokenService
 from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
@@ -90,3 +91,9 @@ def get_cursor_codec() -> CursorCodec:
 @lru_cache
 def get_password_hasher() -> PasswordHasherService:
     return PasswordHasherService()
+
+
+@lru_cache
+def get_session_token_service() -> SessionTokenService:
+    """Return the application's session token service."""
+    return SessionTokenService()
