@@ -18,17 +18,56 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
             model=KnowledgeBase,
         )
 
-    def get_by_name(self, name: str) -> KnowledgeBase | None:
-        """Get knowledge base by its unique name."""
-        statement = select(KnowledgeBase).where(KnowledgeBase.name == name)
+    def get_by_user_and_id(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+    ) -> KnowledgeBase | None:
+        """Retrieve a knowledge base by user and knowledge base ID."""
+        statement = select(KnowledgeBase).where(
+            KnowledgeBase.id == knowledge_base_id,
+            KnowledgeBase.user_id == user_id,
+        )
         return self.db.scalar(statement)
 
-    def exists_by_name(self, name: str) -> bool:
-        """Check if a knowledge base with the given name exists."""
-        statement = select(exists().where(KnowledgeBase.name == name))
+    def get_by_user_and_project_id(
+        self,
+        *,
+        user_id: UUID,
+        project_id: UUID,
+    ) -> KnowledgeBase | None:
+        """Retrieve the knowledge base associated with a user and project."""
+        statement = select(KnowledgeBase).where(
+            KnowledgeBase.project_id == project_id,
+            KnowledgeBase.user_id == user_id,
+        )
+        return self.db.scalar(statement)
+
+    def get_by_user_and_name(
+        self,
+        *,
+        user_id: UUID,
+        name: str,
+    ) -> KnowledgeBase | None:
+        """Get knowledge base by user and unique name."""
+        statement = select(KnowledgeBase).where(
+            KnowledgeBase.user_id == user_id,
+            KnowledgeBase.name == name,
+        )
+        return self.db.scalar(statement)
+
+    def exists_by_user_and_name(
+        self,
+        *,
+        user_id: UUID,
+        name: str,
+    ) -> bool:
+        """Check if a knowledge base exists for a user by name."""
+        statement = select(
+            exists().where(
+                KnowledgeBase.user_id == user_id,
+                KnowledgeBase.name == name,
+            )
+        )
         return bool(self.db.scalar(statement))
-
-    def get_by_project_id(self, *, project_id: UUID) -> KnowledgeBase | None:
-        """Get the knowledge base associated with a project."""
-        statement = select(KnowledgeBase).where(KnowledgeBase.project_id == project_id)
-        return self.db.scalar(statement)

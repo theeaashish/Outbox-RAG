@@ -50,10 +50,18 @@ class ConversationService:
 
         return self._cursor_codec
 
-    def _get_knowledge_base(self, *, knowledge_base_id: UUID) -> KnowledgeBase:
+    def _get_knowledge_base(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+    ) -> KnowledgeBase:
         """Retrieve a knowledge base or raise ResourceNotFoundException if not found."""
 
-        knowledge_base = self._knowledge_base_repository.get_by_id(knowledge_base_id)
+        knowledge_base = self._knowledge_base_repository.get_by_user_and_id(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
         if knowledge_base is None:
             raise ResourceNotFoundException(
@@ -64,12 +72,14 @@ class ConversationService:
     def _get_conversation(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> Conversation:
         """Retrieve a conversation or raise if it does not exist."""
 
-        conversation = self._conversation_repository.get_by_id(
-            conversation_id,
+        conversation = self._conversation_repository.get_by_user_and_id(
+            user_id=user_id,
+            conversation_id=conversation_id,
         )
 
         if conversation is None:
@@ -97,19 +107,19 @@ class ConversationService:
     def create_conversation(
         self,
         *,
-        user_id: UUID | None = None,
+        user_id: UUID,
         knowledge_base_id: UUID,
     ) -> Conversation:
         """Create a conversation for a knowledge base."""
 
         knowledge_base = self._get_knowledge_base(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
         )
-        effective_user_id = user_id or knowledge_base.user_id
 
         try:
             conversation = self._create_conversation(
-                user_id=effective_user_id,
+                user_id=user_id,
                 project_id=knowledge_base.project_id,
                 knowledge_base=knowledge_base,
             )
@@ -146,7 +156,8 @@ class ConversationService:
         if project is None:
             raise ResourceNotFoundException("Project not found")
 
-        knowledge_base = self._knowledge_base_repository.get_by_project_id(
+        knowledge_base = self._knowledge_base_repository.get_by_user_and_project_id(
+            user_id=user_id,
             project_id=project.id,
         )
         if knowledge_base is None:
@@ -169,17 +180,20 @@ class ConversationService:
     def get_conversation(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> Conversation:
         """Retrieve a conversation."""
 
         return self._get_conversation(
+            user_id=user_id,
             conversation_id=conversation_id,
         )
 
     def list_conversations(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         limit: int = 50,
         offset: int = 0,
@@ -187,10 +201,12 @@ class ConversationService:
         """List conversations for a knowledge base."""
 
         self._get_knowledge_base(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
         )
 
-        return self._conversation_repository.list_by_knowledge_base(
+        return self._conversation_repository.list_by_user_and_knowledge_base(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             limit=limit,
             offset=offset,
@@ -199,6 +215,7 @@ class ConversationService:
     def list_messages(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         limit: int = 100,
         offset: int = 0,
@@ -206,6 +223,7 @@ class ConversationService:
         """List messages for a conversation."""
 
         self._get_conversation(
+            user_id=user_id,
             conversation_id=conversation_id,
         )
 
@@ -262,6 +280,7 @@ class ConversationService:
     def list_conversations_cursor(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         page_size: int,
         after: str | None = None,
@@ -269,14 +288,18 @@ class ConversationService:
     ) -> CursorPage[Conversation]:
         """List knowledge-base conversations through a signed cursor page."""
 
-        self._get_knowledge_base(knowledge_base_id=knowledge_base_id)
+        self._get_knowledge_base(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
         after_position, before_position, snapshot_timestamp = self._decode_page_cursors(
             resource=CursorResource.CONVERSATIONS,
             scope_id=knowledge_base_id,
             after=after,
             before=before,
         )
-        return self._conversation_repository.list_page_by_knowledge_base(
+        return self._conversation_repository.list_page_by_user_and_knowledge_base(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             page_size=page_size,
             snapshot_timestamp=snapshot_timestamp,
@@ -287,6 +310,7 @@ class ConversationService:
     def list_messages_cursor(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         page_size: int,
         after: str | None = None,
@@ -294,7 +318,10 @@ class ConversationService:
     ) -> CursorPage[Message]:
         """List newest-first conversation messages through a signed cursor page."""
 
-        self._get_conversation(conversation_id=conversation_id)
+        self._get_conversation(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
         after_position, before_position, snapshot_timestamp = self._decode_page_cursors(
             resource=CursorResource.MESSAGES,
             scope_id=conversation_id,
@@ -312,11 +339,13 @@ class ConversationService:
     def delete_conversation(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> None:
         """Delete a conversation."""
 
         conversation = self._get_conversation(
+            user_id=user_id,
             conversation_id=conversation_id,
         )
 

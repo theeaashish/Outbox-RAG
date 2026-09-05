@@ -15,6 +15,7 @@ class DocumentController:
     async def upload_document(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         file: UploadFile,
     ) -> Document:
@@ -27,6 +28,7 @@ class DocumentController:
         )
         return await run_in_threadpool(
             self._service.upload_document,
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             file=incoming,
         )

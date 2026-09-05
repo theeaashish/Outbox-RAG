@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, contains_eager
 
 from app.core.ai.retrieval.models import RetrievedChunk
-from app.db.models import Document, DocumentChunk
+from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.models.enums import DocumentStatus
 from app.repositories.base import BaseRepository
 
@@ -52,6 +52,7 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
     def search_similar(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         embedding: list[float],
         limit: int = 5,
@@ -67,6 +68,7 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
 
         filters = [
             Document.knowledge_base_id == knowledge_base_id,
+            KnowledgeBase.user_id == user_id,
             Document.status == DocumentStatus.READY,
         ]
         if threshold is not None:
@@ -74,7 +76,8 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
 
         statement = (
             select(DocumentChunk, similarity)
-            .join(Document)
+            .join(Document, DocumentChunk.document_id == Document.id)
+            .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
             .options(contains_eager(DocumentChunk.document))
             .where(*filters)
             .order_by(distance.asc())

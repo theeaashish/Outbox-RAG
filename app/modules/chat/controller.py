@@ -42,6 +42,7 @@ class ChatController:
     async def send_message(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         content: str,
     ) -> ChatResponse:
@@ -49,6 +50,7 @@ class ChatController:
 
         result = await run_in_threadpool(
             self._chat_service.send_message,
+            user_id=user_id,
             conversation_id=conversation_id,
             content=content,
         )
@@ -61,6 +63,7 @@ class ChatController:
     async def stream_message(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         content: str,
         request: Request,
@@ -69,6 +72,7 @@ class ChatController:
 
         prepared = await run_in_threadpool(
             self._chat_service.prepare_turn,
+            user_id=user_id,
             conversation_id=conversation_id,
             content=content,
         )

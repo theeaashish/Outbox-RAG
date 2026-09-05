@@ -46,8 +46,13 @@ class DocumentService:
         self._hasher = hasher
         self._storage = storage
 
-    def _get_knowledge_base(self, *, knowledge_base_id: UUID) -> KnowledgeBase:
-        knowledge_base = self._knowledge_base_repository.get_by_id(knowledge_base_id)
+    def _get_knowledge_base(
+        self, *, user_id: UUID, knowledge_base_id: UUID
+    ) -> KnowledgeBase:
+        knowledge_base = self._knowledge_base_repository.get_by_user_and_id(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
 
         if knowledge_base is None:
             raise ResourceNotFoundException("Knowledge base not found")
@@ -136,6 +141,7 @@ class DocumentService:
     def upload_document(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         file: IncomingFile,
     ) -> Document:
@@ -144,6 +150,7 @@ class DocumentService:
         logger.info(
             "Upload Started",
             extra={
+                "user_id": str(user_id),
                 "kb_id": str(knowledge_base_id),
                 "file_name": file.filename,
                 "size": file.size,
@@ -153,8 +160,11 @@ class DocumentService:
         # validate the incoming file
         self._validator.validate(file=file)
 
-        # ensure the knowledge base exists.
-        knowledge_base = self._get_knowledge_base(knowledge_base_id=knowledge_base_id)
+        # ensure the knowledge base exists and belongs to the user.
+        knowledge_base = self._get_knowledge_base(
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
 
         # hash the file for content-based deduplication
         file_hash = self._hasher.hash(file.content)

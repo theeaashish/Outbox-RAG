@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, File, UploadFile, status
 
+from app.dependencies.auth import CurrentUser
 from app.dependencies.controllers import DocumentControllerDep
 from app.modules.document.schemas import DocumentResponse
 
@@ -18,8 +19,10 @@ async def upload_document(
     knowledge_base_id: UUID,
     file: UploadFile = File(...),  # noqa: B008
     controller: DocumentControllerDep,
+    current_user: CurrentUser,
 ) -> DocumentResponse:
     document = await controller.upload_document(
+        user_id=current_user.id,
         knowledge_base_id=knowledge_base_id,
         file=file,
     )

@@ -26,7 +26,7 @@ class ConversationController:
     def create_conversation(
         self,
         *,
-        user_id: UUID | None = None,
+        user_id: UUID,
         knowledge_base_id: UUID,
     ) -> ConversationResponse:
         """Create a new conversation."""
@@ -53,11 +53,13 @@ class ConversationController:
     def get_conversation(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> ConversationResponse:
         """Retrieve a conversation."""
 
         conversation = self._conversation_service.get_conversation(
+            user_id=user_id,
             conversation_id=conversation_id,
         )
 
@@ -66,6 +68,7 @@ class ConversationController:
     def list_conversations(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         limit: int = 50,
         offset: int = 0,
@@ -73,6 +76,7 @@ class ConversationController:
         """List conversations for a knowledge base."""
 
         conversations = self._conversation_service.list_conversations(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             limit=limit,
             offset=offset,
@@ -83,6 +87,7 @@ class ConversationController:
     def list_messages(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         limit: int = 100,
         offset: int = 0,
@@ -90,6 +95,7 @@ class ConversationController:
         """List messages for a conversation."""
 
         messages = self._conversation_service.list_messages(
+            user_id=user_id,
             conversation_id=conversation_id,
             limit=limit,
             offset=offset,
@@ -100,12 +106,14 @@ class ConversationController:
     def list_conversations_cursor(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         page_size: int,
         after: str | None = None,
         before: str | None = None,
     ) -> ConversationCursorPageResponse:
         page = self._conversation_service.list_conversations_cursor(
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             page_size=page_size,
             after=after,
@@ -121,12 +129,14 @@ class ConversationController:
     def list_messages_cursor(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         page_size: int,
         after: str | None = None,
         before: str | None = None,
     ) -> MessageCursorPageResponse:
         page = self._conversation_service.list_messages_cursor(
+            user_id=user_id,
             conversation_id=conversation_id,
             page_size=page_size,
             after=after,
@@ -142,10 +152,12 @@ class ConversationController:
     def delete_conversation(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
     ) -> None:
         """Delete a conversation."""
 
         self._conversation_service.delete_conversation(
+            user_id=user_id,
             conversation_id=conversation_id,
         )

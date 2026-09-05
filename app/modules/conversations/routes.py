@@ -42,10 +42,12 @@ def create_conversation(
     *,
     knowledge_base_id: UUID,
     controller: ConversationControllerDep,
+    current_user: CurrentUser,
 ) -> ConversationResponse:
     """Create a new conversation for a knowledge base."""
 
     return controller.create_conversation(
+        user_id=current_user.id,
         knowledge_base_id=knowledge_base_id,
     )
 
@@ -77,6 +79,7 @@ def list_conversations(
     *,
     knowledge_base_id: UUID,
     controller: ConversationControllerDep,
+    current_user: CurrentUser,
     response: Response,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -85,6 +88,7 @@ def list_conversations(
 
     response.headers["Deprecation"] = "true"
     return controller.list_conversations(
+        user_id=current_user.id,
         knowledge_base_id=knowledge_base_id,
         limit=limit,
         offset=offset,
@@ -99,10 +103,12 @@ def get_conversation(
     *,
     conversation_id: UUID,
     controller: ConversationControllerDep,
+    current_user: CurrentUser,
 ) -> ConversationResponse:
     """Retrieve a conversation."""
 
     return controller.get_conversation(
+        user_id=current_user.id,
         conversation_id=conversation_id,
     )
 
@@ -116,6 +122,7 @@ def list_messages(
     *,
     conversation_id: UUID,
     controller: ConversationControllerDep,
+    current_user: CurrentUser,
     response: Response,
     limit: int = Query(100, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -124,6 +131,7 @@ def list_messages(
 
     response.headers["Deprecation"] = "true"
     return controller.list_messages(
+        user_id=current_user.id,
         conversation_id=conversation_id,
         limit=limit,
         offset=offset,
@@ -138,10 +146,12 @@ def delete_conversation(
     *,
     conversation_id: UUID,
     controller: ConversationControllerDep,
+    current_user: CurrentUser,
 ) -> Response:
     """Delete a conversation."""
 
     controller.delete_conversation(
+        user_id=current_user.id,
         conversation_id=conversation_id,
     )
 

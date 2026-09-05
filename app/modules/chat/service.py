@@ -49,6 +49,7 @@ class PreparedChatTurn:
 
     conversation_id: UUID
     knowledge_base_id: UUID
+    user_id: UUID
     user_content: str
     context: AssembledContext
     prompt: list[ChatMessage]
@@ -161,8 +162,17 @@ class ChatService:
         self._similarity_threshold = similarity_threshold
         self._stream_max_buffered_characters = stream_max_buffered_characters
 
-    def _get_conversation(self, *, conversation_id: UUID) -> Conversation:
-        conversation = self._conversation_repository.get_by_id(conversation_id)
+    def _get_conversation(
+        self,
+        *,
+        user_id: UUID,
+        conversation_id: UUID,
+    ) -> Conversation:
+        conversation = self._conversation_repository.get_by_user_and_id(
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+
         if conversation is None:
             raise ResourceNotFoundException("Conversation not found")
         return conversation
@@ -186,6 +196,7 @@ class ChatService:
     def prepare_turn(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         content: str,
     ) -> PreparedChatTurn:
@@ -193,10 +204,14 @@ class ChatService:
 
         preparation_started_at = perf_counter()
         try:
-            conversation = self._get_conversation(conversation_id=conversation_id)
+            conversation = self._get_conversation(
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
             knowledge_base_id = conversation.knowledge_base_id
             history = self._load_history(conversation_id=conversation_id)
             retrieved_chunks = self._retrieval_service.retrieve(
+                user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 query=content,
                 limit=self._retrieval_limit,
@@ -230,6 +245,7 @@ class ChatService:
         return PreparedChatTurn(
             conversation_id=conversation_id,
             knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
             user_content=content,
             context=context,
             prompt=prompt,
@@ -238,12 +254,19 @@ class ChatService:
     def _persist_messages(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         user_content: str,
         assistant_content: str,
     ) -> Message:
         try:
-            if not self._conversation_repository.exists(conversation_id):
+            if (
+                self._conversation_repository.get_by_user_and_id(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
+                is None
+            ):
                 raise ResourceNotFoundException("Conversation not found")
 
             user_message = Message(
@@ -276,17 +299,23 @@ class ChatService:
     def send_message(
         self,
         *,
+        user_id: UUID,
         conversation_id: UUID,
         content: str,
     ) -> ChatTurnResult:
         """Generate and atomically persist a non-streaming chat turn."""
 
-        prepared = self.prepare_turn(conversation_id=conversation_id, content=content)
+        prepared = self.prepare_turn(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            content=content,
+        )
         llm_response = self._llm_provider.generate(prepared.prompt)
         assistant_content = self._normalize_assistant_content(
             content=llm_response.content
         )
         assistant_message = self._persist_messages(
+            user_id=user_id,
             conversation_id=prepared.conversation_id,
             user_content=prepared.user_content,
             assistant_content=assistant_content,
@@ -383,6 +412,7 @@ class ChatService:
                     conversation_id=prepared.conversation_id,
                     user_content=prepared.user_content,
                     assistant_content=assistant_content,
+                    user_id=prepared.user_id,
                 )
                 logger.info(
                     "Chat stream completed",

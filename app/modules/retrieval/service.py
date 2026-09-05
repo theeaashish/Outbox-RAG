@@ -29,6 +29,7 @@ class RetrievalService:
     def retrieve(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         query: str,
         limit: int = 5,
@@ -40,12 +41,18 @@ class RetrievalService:
         When ``threshold`` is omitted, returns top-k by similarity only.
         """
 
-        if self._knowledge_base_repository.get_by_id(knowledge_base_id) is None:
+        if (
+            self._knowledge_base_repository.get_by_user_and_id(
+                user_id=user_id, knowledge_base_id=knowledge_base_id
+            )
+            is None
+        ):
             raise ResourceNotFoundException("Knowledge base not found")
 
         logger.info(
             "Retrieval started",
             extra={
+                "user_id": str(user_id),
                 "kb_id": str(knowledge_base_id),
                 "limit": limit,
                 "threshold": threshold,
@@ -56,6 +63,7 @@ class RetrievalService:
 
         results = self.chunk_repository.search_similar(
             knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
             embedding=embedding,
             limit=limit,
             threshold=threshold,

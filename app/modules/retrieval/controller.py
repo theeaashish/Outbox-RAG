@@ -21,6 +21,7 @@ class RetrievalController:
     async def retrieve(
         self,
         *,
+        user_id: UUID,
         knowledge_base_id: UUID,
         query: str,
         limit: int = 5,
@@ -32,6 +33,7 @@ class RetrievalController:
 
         retrieved_chunks = await run_in_threadpool(
             self.retrieval_service.retrieve,
+            user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             query=query,
             limit=limit,

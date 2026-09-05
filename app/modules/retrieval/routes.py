@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from app.dependencies.auth import CurrentUser
 from app.dependencies.retrieval import RetrievalControllerDep
 from app.modules.retrieval.schemas import RetrievalRequest, RetrievalResponse
 
@@ -17,10 +18,12 @@ async def retrieve(
     knowledge_base_id: UUID,
     request: RetrievalRequest,
     controller: RetrievalControllerDep,
+    current_user: CurrentUser,
 ) -> RetrievalResponse:
     """Perform semantic search within a knowledge base"""
 
     return await controller.retrieve(
+        user_id=current_user.id,
         knowledge_base_id=knowledge_base_id,
         query=request.query,
         limit=request.limit,
