@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -203,4 +204,27 @@ class AuthService:
         return AuthenticatedSession(
             user=user,
             token=raw_token,
+        )
+
+    def logout(self, *, session_id: UUID) -> None:
+        """Revoke an active session by its ID.
+
+        Revocation is intentionally idempotent: concurrent requests logging out the same
+        session complete successfully even if the session was already revoked.
+        """
+
+        revoked = self._session_repository.revoke(session_id=session_id)
+
+        try:
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
+        logger.info(
+            "Session logout processed",
+            extra={
+                "session_id": str(session_id),
+                "revoked": revoked,
+            },
         )

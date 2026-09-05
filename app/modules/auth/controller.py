@@ -15,6 +15,7 @@ from app.modules.auth.schemas import (
 from app.modules.auth.service import AuthenticatedSession, AuthService
 
 if TYPE_CHECKING:
+    from app.db.models.session import Session as SessionModel
     from app.db.models.user import User
 
 
@@ -60,3 +61,8 @@ class AuthController:
         """Return the public profile for the authenticated user."""
 
         return mapper.to_user_response(user)
+
+    def logout(self, *, session: SessionModel) -> None:
+        """Revoke the current authenticated session."""
+
+        self._auth_service.logout(session_id=session.id)

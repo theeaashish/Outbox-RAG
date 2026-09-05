@@ -5,7 +5,7 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
-from app.dependencies.auth import CurrentUser
+from app.dependencies.auth import CurrentSession, CurrentUser
 from app.dependencies.controllers import AuthControllerDep
 from app.modules.auth.schemas import (
     LoginRequest,
@@ -82,3 +82,31 @@ def get_me(
     """Get the current authenticated user's profile."""
 
     return controller.get_me(user=current_user)
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def logout(
+    current_session: CurrentSession,
+    controller: AuthControllerDep,
+) -> Response:
+    """Log out the current session and clear the session cookie."""
+
+    controller.logout(session=current_session)
+
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        path=settings.session_cookie_path,
+        httponly=settings.session_cookie_httponly,
+        secure=settings.session_cookie_secure,
+        samesite=cast(
+            Literal["lax", "strict", "none"],
+            settings.session_cookie_samesite,
+        ),
+    )
+
+    return response
