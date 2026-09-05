@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.modules.auth import mapper
@@ -9,8 +10,12 @@ from app.modules.auth.schemas import (
     LoginResponse,
     RegisterRequest,
     RegisterResponse,
+    UserResponse,
 )
 from app.modules.auth.service import AuthenticatedSession, AuthService
+
+if TYPE_CHECKING:
+    from app.db.models.user import User
 
 
 class AuthController:
@@ -50,3 +55,8 @@ class AuthController:
         response = mapper.to_login_response(authenticated_session.user)
 
         return response, authenticated_session
+
+    def get_me(self, *, user: User) -> UserResponse:
+        """Return the public profile for the authenticated user."""
+
+        return mapper.to_user_response(user)

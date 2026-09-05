@@ -5,12 +5,14 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
+from app.dependencies.auth import CurrentUser
 from app.dependencies.controllers import AuthControllerDep
 from app.modules.auth.schemas import (
     LoginRequest,
     LoginResponse,
     RegisterRequest,
     RegisterResponse,
+    UserResponse,
 )
 
 router = APIRouter(
@@ -66,3 +68,17 @@ def login(
     )
 
     return login_response
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_me(
+    current_user: CurrentUser,
+    controller: AuthControllerDep,
+) -> UserResponse:
+    """Get the current authenticated user's profile."""
+
+    return controller.get_me(user=current_user)

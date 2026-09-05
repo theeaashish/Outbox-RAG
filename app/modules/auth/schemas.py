@@ -20,14 +20,18 @@ class RegisterRequest(BaseModel):
     )
 
 
-class RegisterResponse(BaseModel):
-    """Response returned after successful registration."""
+class UserResponse(BaseModel):
+    """Response returned for authenticated user information."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     email: EmailStr
     name: str | None
+
+
+class RegisterResponse(UserResponse):
+    """Response returned after successful registration."""
 
 
 class LoginRequest(BaseModel):
@@ -40,11 +44,5 @@ class LoginRequest(BaseModel):
     )
 
 
-class LoginResponse(BaseModel):
+class LoginResponse(UserResponse):
     """Response returned after successful authentication."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    email: EmailStr
-    name: str | None
