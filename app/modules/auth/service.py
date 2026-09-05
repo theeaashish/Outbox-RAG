@@ -57,6 +57,20 @@ class AuthService:
 
         return email.strip().casefold()
 
+    def authenticate_session(self, *, token: str) -> User:
+        """Authenticate a user from a raw session token."""
+
+        token_hash = self._session_token_service.hash_token(token)
+
+        session = self._session_repository.get_active_with_user_by_token_hash(
+            token_hash=token_hash
+        )
+
+        if session is None:
+            raise UnauthorizedException("Authentication required")
+
+        return session.user
+
     def register(
         self,
         *,

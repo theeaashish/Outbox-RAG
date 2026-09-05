@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 
-from app.dependencies.auth import AuthenticatedUserIdDep
+from app.dependencies.auth import CurrentUser
 from app.dependencies.conversations import ConversationControllerDep
 from app.modules.conversations.schemas import (
     ConversationListResponse,
@@ -59,11 +59,11 @@ def create_project_conversation(
     *,
     project_id: UUID,
     controller: ConversationControllerDep,
-    user_id: AuthenticatedUserIdDep,
+    current_user: CurrentUser,
 ) -> ConversationResponse:
     """Create a conversation for a project and its knowledge base."""
     return controller.create_project_conversation(
-        user_id=user_id,
+        user_id=current_user.id,
         project_id=project_id,
     )
 
