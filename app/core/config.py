@@ -1,7 +1,8 @@
+import json
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,22 @@ class Settings(BaseSettings):
 
     app_host: str = Field(default="127.0.0.1")
     app_port: int = Field(default=8000)
+
+    # cors
+
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000"]
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: object) -> list[str] | object:
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                return json.loads(v_stripped)
+            return [i.strip() for i in v_stripped.split(",") if i.strip()]
+        return v
 
     api_v1_prefix: str = Field(default="/api/v1")
 

@@ -22,6 +22,7 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
+    knowledge_base_id: UUID
     created_at: datetime
     updated_at: datetime
 

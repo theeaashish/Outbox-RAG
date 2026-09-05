@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Project
 from app.repositories.base import BaseRepository
@@ -17,9 +17,10 @@ class ProjectRepository(BaseRepository[Project]):
         super().__init__(db=db, model=Project)
 
     def get_by_user_and_id(self, *, user_id: UUID, project_id: UUID) -> Project | None:
-        statement = select(Project).where(
-            Project.id == project_id,
-            Project.user_id == user_id,
+        statement = (
+            select(Project)
+            .options(selectinload(Project.knowledge_base))
+            .where(Project.id == project_id, Project.user_id == user_id)
         )
         return self.db.scalar(statement)
 
@@ -32,6 +33,7 @@ class ProjectRepository(BaseRepository[Project]):
     ) -> Sequence[Project]:
         statement = (
             select(Project)
+            .options(selectinload(Project.knowledge_base))
             .where(Project.user_id == user_id)
             .order_by(Project.created_at.desc(), Project.id.desc())
             .limit(limit)
