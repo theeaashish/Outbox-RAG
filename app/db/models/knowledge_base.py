@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -32,7 +33,6 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
     )
 
     project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -46,6 +46,7 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
 
     project: Mapped[Project] = relationship(
         back_populates="knowledge_base",
+        foreign_keys=[project_id],
         lazy="raise",
     )
 
@@ -59,9 +60,16 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
         back_populates="knowledge_base",
         cascade="all, delete-orphan",
         lazy="select",
+        foreign_keys="[Conversation.knowledge_base_id]",
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "user_id"],
+            ["projects.id", "projects.user_id"],
+            name="fk_knowledge_bases_project_id_user_id_projects",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "user_id",
             "name",
@@ -70,6 +78,12 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
         UniqueConstraint(
             "project_id",
             name="uq_knowledge_bases_project_id",
+        ),
+        # Supporting unique constraint for Conversation composite foreign key (id is already primary key)
+        UniqueConstraint(
+            "id",
+            "project_id",
+            name="uq_knowledge_bases_id_project_id",
         ),
         Index(
             "ix_knowledge_bases_user_id",

@@ -38,6 +38,7 @@ class Project(UUIDMixin, TimestampMixin, Base):
         passive_deletes=True,
         lazy="select",
         uselist=False,
+        foreign_keys="[KnowledgeBase.project_id]",
     )
 
     conversations: Mapped[list[Conversation]] = relationship(
@@ -45,9 +46,12 @@ class Project(UUIDMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="select",
+        foreign_keys="[Conversation.project_id]",
     )
 
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uq_projects_user_name"),
+        # Supporting unique constraint for composite foreign keys (id is already primary key)
+        UniqueConstraint("id", "user_id", name="uq_projects_id_user_id"),
         Index("ix_projects_user_id", "user_id"),
     )

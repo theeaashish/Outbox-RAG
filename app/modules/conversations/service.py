@@ -33,9 +33,9 @@ class ConversationService:
         db: Session,
         conversation_repository: ConversationRepository,
         knowledge_base_repository: KnowledgeBaseRepository,
+        project_repository: ProjectRepository,
         message_repository: MessageRepository,
         cursor_codec: CursorCodec,
-        project_repository: ProjectRepository | None = None,
     ) -> None:
         self._db = db
         self._conversation_repository = conversation_repository
@@ -94,7 +94,10 @@ class ConversationService:
         project_id: UUID,
         knowledge_base: KnowledgeBase,
     ) -> Conversation:
-        """Create a new conversation."""
+        """Create a new conversation after verifying relationship invariants."""
+
+        if knowledge_base.project_id != project_id or knowledge_base.user_id != user_id:
+            raise ResourceNotFoundException("Inconsistent resource ownership")
 
         conversation = Conversation(
             user_id=user_id,
@@ -117,10 +120,17 @@ class ConversationService:
             knowledge_base_id=knowledge_base_id,
         )
 
+        project = self._project_repository.get_by_user_and_id(
+            user_id=user_id,
+            project_id=knowledge_base.project_id,
+        )
+        if project is None:
+            raise ResourceNotFoundException("Project not found")
+
         try:
             conversation = self._create_conversation(
                 user_id=user_id,
-                project_id=knowledge_base.project_id,
+                project_id=project.id,
                 knowledge_base=knowledge_base,
             )
             self._db.commit()
@@ -147,8 +157,6 @@ class ConversationService:
         project_id: UUID,
     ) -> Conversation:
         """Create a conversation using the project's knowledge base."""
-        if self._project_repository is None:
-            raise ResourceNotFoundException("Project repository is not configured")
         project = self._project_repository.get_by_user_and_id(
             user_id=user_id,
             project_id=project_id,

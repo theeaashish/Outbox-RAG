@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Index, text
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -26,12 +26,10 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
     )
 
     project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
 
     knowledge_base_id: Mapped[UUID] = mapped_column(
-        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -42,11 +40,13 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
 
     project: Mapped[Project] = relationship(
         back_populates="conversations",
+        foreign_keys=[project_id],
         lazy="raise",
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(
         back_populates="conversations",
+        foreign_keys=[knowledge_base_id],
         lazy="select",
     )
 
@@ -58,6 +58,18 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "user_id"],
+            ["projects.id", "projects.user_id"],
+            name="fk_conversations_project_id_user_id_projects",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["knowledge_base_id", "project_id"],
+            ["knowledge_bases.id", "knowledge_bases.project_id"],
+            name="fk_conversations_kb_id_project_id_knowledge_bases",
+            ondelete="CASCADE",
+        ),
         Index(
             "ix_conversations_user_id",
             "user_id",
