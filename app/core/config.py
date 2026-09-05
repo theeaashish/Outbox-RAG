@@ -117,6 +117,8 @@ class Settings(BaseSettings):
 
     session_activity_update_minutes: int = Field(default=5, ge=1)
 
+    session_cleanup_retention_days: int = Field(default=30, ge=1)
+
     session_cookie_name: str = "session"
 
     session_cookie_secure: bool = False

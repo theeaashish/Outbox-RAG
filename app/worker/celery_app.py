@@ -21,6 +21,7 @@ celery_app.conf.update(
     imports=(
         "app.worker.tasks.document_tasks",
         "app.worker.tasks.outbox_tasks",
+        "app.worker.tasks.session_tasks",
     ),
     task_queues=(
         Queue(QueueNames.DOCUMENTS),
@@ -29,11 +30,17 @@ celery_app.conf.update(
     task_routes={
         "document.process": {"queue": QueueNames.DOCUMENTS},
         "outbox.publish": {"queue": QueueNames.MAINTENANCE},
+        "session.cleanup": {"queue": QueueNames.MAINTENANCE},
     },
     beat_schedule={
         "publish-outbox-events": {
             "task": "outbox.publish",
             "schedule": 5.0,
+            "options": {"queue": QueueNames.MAINTENANCE},
+        },
+        "cleanup-sessions": {
+            "task": "session.cleanup",
+            "schedule": 3600.0,
             "options": {"queue": QueueNames.MAINTENANCE},
         },
     },

@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, joinedload
 
@@ -127,6 +127,55 @@ class SessionRepository(BaseRepository[SessionModel]):
             .values(
                 revoked_at=datetime.now(UTC),
             )
+        )
+
+        result = cast(CursorResult[None], self.db.execute(statement))
+
+        return result.rowcount
+
+    def delete_cleanup_batch(
+        self, *, now: datetime, retention: timedelta, limit: int
+    ) -> int:
+        """Delete a bounded batch of sessions that have been dead beyond retention."""
+
+        cutoff = now - retention
+        idle_expired_cutoff = cutoff - self._idle_timeout
+
+        eligible_ids = (
+            select(SessionModel.id)
+            .where(
+                or_(
+                    # Explicitly revoked long enough ago.
+                    and_(
+                        SessionModel.revoked_at.is_not(None),
+                        SessionModel.revoked_at <= cutoff,
+                    ),
+                    # Naturally expired long enough ago.
+                    and_(
+                        SessionModel.revoked_at.is_(None),
+                        SessionModel.expires_at <= cutoff,
+                    ),
+                    # Idle-expired long enough ago.
+                    and_(
+                        SessionModel.revoked_at.is_(None),
+                        func.coalesce(
+                            SessionModel.last_seen_at,
+                            SessionModel.created_at,
+                        )
+                        <= idle_expired_cutoff,
+                    ),
+                )
+            )
+            .order_by(SessionModel.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+            .cte("cleanup_candidates")
+        )
+
+        statement = (
+            delete(SessionModel)
+            .where(SessionModel.id.in_(select(eligible_ids.c.id)))
+            .execution_options(synchronize_session=False)
         )
 
         result = cast(CursorResult[None], self.db.execute(statement))
