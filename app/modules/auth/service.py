@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -44,6 +45,9 @@ class AuthService:
         session_repository: SessionRepository,
         password_hasher: PasswordHasherService,
         session_token_service: SessionTokenService,
+        session_activity_update_interval: timedelta,
+        session_factory: Callable[[], Session],
+        session_repository_factory: Callable[[Session], SessionRepository],
     ) -> None:
         self._db = db
         self._user_repository = user_repository
@@ -51,6 +55,9 @@ class AuthService:
         self._session_repository = session_repository
         self._password_hasher = password_hasher
         self._session_token_service = session_token_service
+        self._session_activity_update_interval = session_activity_update_interval
+        self._session_factory = session_factory
+        self._session_repository_factory = session_repository_factory
 
     @staticmethod
     def _normalize_email(email: str) -> str:
@@ -58,8 +65,8 @@ class AuthService:
 
         return email.strip().casefold()
 
-    def authenticate_session(self, *, token: str) -> User:
-        """Authenticate a user from a raw session token."""
+    def authenticate_session(self, *, token: str) -> SessionModel:
+        """Authenticate an active session from a raw session token."""
 
         token_hash = self._session_token_service.hash_token(token)
 
@@ -70,7 +77,38 @@ class AuthService:
         if session is None:
             raise UnauthorizedException("Authentication required")
 
-        return session.user
+        return session
+
+    def record_session_activity(self, *, session: SessionModel) -> None:
+        """Record meaningful activity when the configured interval has elapsed.
+
+        Uses an isolated database transaction so activity tracking is committed
+        independently without interfering with the request's primary transaction boundary.
+        """
+
+        now = datetime.now(UTC)
+        last_seen_at = session.last_seen_at or session.created_at
+        threshold = now - self._session_activity_update_interval
+
+        if last_seen_at >= threshold:
+            return
+
+        with self._session_factory() as touch_db:
+            repo = self._session_repository_factory(touch_db)
+            updated = repo.touch_if_stale(
+                session_id=session.id,
+                threshold=threshold,
+                now=now,
+            )
+
+            if not updated:
+                return
+
+            try:
+                touch_db.commit()
+            except Exception:
+                touch_db.rollback()
+                raise
 
     def register(
         self,

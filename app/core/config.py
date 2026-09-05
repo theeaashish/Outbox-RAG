@@ -113,6 +113,10 @@ class Settings(BaseSettings):
 
     session_lifetime_days: int = Field(default=30, ge=1)
 
+    session_idle_timeout_days: int = Field(default=7, ge=1)
+
+    session_activity_update_minutes: int = Field(default=5, ge=1)
+
     session_cookie_name: str = "session"
 
     session_cookie_secure: bool = False

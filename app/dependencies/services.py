@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends
@@ -8,10 +9,12 @@ from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.auth.passwords import PasswordHasherService
 from app.core.auth.session import SessionTokenService
+from app.core.config import settings
 from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
 from app.core.storage import StorageService
+from app.db.session import SessionLocal
 from app.dependencies.core import (
     get_document_parser_registry,
     get_embedding_generator,
@@ -181,6 +184,11 @@ def get_auth_service(
         session_repository=session_repository,
         password_hasher=password_hasher,
         session_token_service=session_token_service,
+        session_activity_update_interval=timedelta(
+            minutes=settings.session_activity_update_minutes
+        ),
+        session_factory=SessionLocal,
+        session_repository_factory=get_session_repository,
     )
 
 

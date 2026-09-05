@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.repositories.conversation import ConversationRepository
 from app.repositories.document import DocumentRepository
@@ -86,4 +88,7 @@ def get_session_repository(
 ) -> SessionRepository:
     """Return a session repository."""
 
-    return SessionRepository(db=db)
+    return SessionRepository(
+        db=db,
+        idle_timeout=timedelta(days=settings.session_idle_timeout_days),
+    )

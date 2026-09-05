@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, joinedload
 
@@ -15,10 +15,24 @@ from app.repositories.base import BaseRepository
 class SessionRepository(BaseRepository[SessionModel]):
     """Repository for authenticated browser session persistence."""
 
-    def __init__(self, *, db: Session) -> None:
+    def __init__(self, *, db: Session, idle_timeout: timedelta) -> None:
         super().__init__(
             db=db,
             model=SessionModel,
+        )
+        self._idle_timeout = idle_timeout
+
+    def _active_conditions(self, *, token_hash: str, now: datetime):
+        """Return the shared conditions defining an active session."""
+
+        idle_threshold = now - self._idle_timeout
+
+        return (
+            SessionModel.token_hash == token_hash,
+            SessionModel.revoked_at.is_(None),
+            SessionModel.expires_at > now,
+            func.coalesce(SessionModel.last_seen_at, SessionModel.created_at)
+            > idle_threshold,
         )
 
     def get_active_by_token_hash(self, *, token_hash: str) -> SessionModel | None:
@@ -27,9 +41,7 @@ class SessionRepository(BaseRepository[SessionModel]):
         now = datetime.now(UTC)
 
         statement = select(SessionModel).where(
-            SessionModel.token_hash == token_hash,
-            SessionModel.revoked_at.is_(None),
-            SessionModel.expires_at > now,
+            *self._active_conditions(token_hash=token_hash, now=now)
         )
 
         return self.db.scalar(statement)
@@ -46,14 +58,42 @@ class SessionRepository(BaseRepository[SessionModel]):
         statement = (
             select(SessionModel)
             .options(joinedload(SessionModel.user))
-            .where(
-                SessionModel.token_hash == token_hash,
-                SessionModel.revoked_at.is_(None),
-                SessionModel.expires_at > now,
-            )
+            .where(*self._active_conditions(token_hash=token_hash, now=now))
         )
 
         return self.db.scalar(statement)
+
+    @property
+    def idle_timeout(self) -> timedelta:
+        """Return the configured idle timeout for sessions."""
+        return self._idle_timeout
+
+    def touch_if_stale(
+        self,
+        *,
+        session_id: UUID,
+        threshold: datetime,
+        now: datetime,
+    ) -> bool:
+        """Advance activity for a non-revoked session when its timestamp is stale."""
+
+        statement = (
+            update(SessionModel)
+            .where(
+                SessionModel.id == session_id,
+                SessionModel.revoked_at.is_(None),
+                SessionModel.expires_at > now,
+                or_(
+                    SessionModel.last_seen_at.is_(None),
+                    SessionModel.last_seen_at < threshold,
+                ),
+            )
+            .values(last_seen_at=now)
+        )
+
+        result = cast(CursorResult[None], self.db.execute(statement))
+
+        return result.rowcount == 1
 
     def revoke(self, *, session_id: UUID) -> bool:
         """Revoke a single session."""

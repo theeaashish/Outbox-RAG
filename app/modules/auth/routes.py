@@ -5,7 +5,7 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response, status
 
 from app.core.config import settings
-from app.dependencies.auth import CurrentSession, CurrentUser
+from app.dependencies.auth import CurrentSessionNoTouch, CurrentUser, CurrentUserNoTouch
 from app.dependencies.controllers import AuthControllerDep
 from app.modules.auth.schemas import (
     LoginRequest,
@@ -90,7 +90,7 @@ def get_me(
     response_class=Response,
 )
 def logout(
-    current_session: CurrentSession,
+    current_session: CurrentSessionNoTouch,
     controller: AuthControllerDep,
 ) -> Response:
     """Log out the current session and clear the session cookie."""
@@ -118,7 +118,7 @@ def logout(
     response_class=Response,
 )
 def logout_all(
-    current_user: CurrentUser,
+    current_user: CurrentUserNoTouch,
     controller: AuthControllerDep,
 ) -> Response:
     """Log out all active sessions for the current user and clear the session cookie."""
