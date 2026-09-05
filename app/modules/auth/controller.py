@@ -66,3 +66,8 @@ class AuthController:
         """Revoke the current authenticated session."""
 
         self._auth_service.logout(session_id=session.id)
+
+    def logout_all(self, *, user: User) -> None:
+        """Revoke all active sessions for the authenticated user."""
+
+        self._auth_service.logout_all(user_id=user.id)

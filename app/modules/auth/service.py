@@ -228,3 +228,28 @@ class AuthService:
                 "revoked": revoked,
             },
         )
+
+    def logout_all(self, *, user_id: UUID) -> int:
+        """Revoke every active session belonging to a user.
+
+        Revocation is intentionally idempotent: completes successfully even if no
+        active sessions were found or revoked.
+        """
+
+        revoked_count = self._session_repository.revoke_all_for_user(user_id=user_id)
+
+        try:
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
+        logger.info(
+            "All user sessions revoked successfully",
+            extra={
+                "user_id": str(user_id),
+                "revoked_count": revoked_count,
+            },
+        )
+
+        return revoked_count

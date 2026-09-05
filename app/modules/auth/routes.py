@@ -110,3 +110,31 @@ def logout(
     )
 
     return response
+
+
+@router.post(
+    "/logout-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def logout_all(
+    current_user: CurrentUser,
+    controller: AuthControllerDep,
+) -> Response:
+    """Log out all active sessions for the current user and clear the session cookie."""
+
+    controller.logout_all(user=current_user)
+
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        path=settings.session_cookie_path,
+        httponly=settings.session_cookie_httponly,
+        secure=settings.session_cookie_secure,
+        samesite=cast(
+            Literal["lax", "strict", "none"],
+            settings.session_cookie_samesite,
+        ),
+    )
+
+    return response
