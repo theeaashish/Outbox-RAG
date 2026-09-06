@@ -45,7 +45,7 @@ async def test_retrieval_controller_response_mapping():
 
     controller = RetrievalController(retrieval_service=mock_service)
     response = await controller.retrieve(
-        knowledge_base_id=uuid4(), query="test query", limit=5
+        user_id=uuid4(), knowledge_base_id=uuid4(), query="test query", limit=5
     )
 
     assert isinstance(response, RetrievalResponse)

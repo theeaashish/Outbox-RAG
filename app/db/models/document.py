@@ -63,6 +63,9 @@ class Document(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    processing_token: Mapped[UUID | None] = mapped_column(
+        nullable=True,
+    )
 
     knowledge_base_id: Mapped[UUID] = mapped_column(
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),

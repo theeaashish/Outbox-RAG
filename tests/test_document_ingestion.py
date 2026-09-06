@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg.errors
 import pytest
@@ -103,6 +103,7 @@ def _pending_document(**overrides) -> SimpleNamespace:
         "last_error": None,
         "processing_started_at": None,
         "processed_at": None,
+        "processing_token": None,
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -110,51 +111,69 @@ def _pending_document(**overrides) -> SimpleNamespace:
 
 def test_skips_document_already_processing_when_active() -> None:
     now = datetime.now(UTC)
+    active_token = uuid4()
     document = _pending_document(
         status=DocumentStatus.PROCESSING,
         processing_started_at=now,
+        processing_token=active_token,
         last_error=None,
     )
     service, db, document_repository, chunk_repository = _build_service(
         document=document
     )
 
-    service.process_document(document_id=document.id)
+    token = service.process_document(document_id=document.id)
 
+    assert token is None
     document_repository.get_for_update.assert_called_once_with(document_id=document.id)
     db.commit.assert_not_called()
     chunk_repository.create.assert_not_called()
     assert document.status == DocumentStatus.PROCESSING
+    assert document.processing_token == active_token
 
 
 def test_claim_document_state_machine_transitions() -> None:
     now = datetime.now(UTC)
 
-    # 1. PENDING document -> claimed, last_error cleared, processing_started_at set
+    # 1. PENDING document -> claimed, last_error cleared, processing_started_at set, token assigned
     pending_doc = _pending_document(status=DocumentStatus.PENDING, last_error="old")
     service, _db, _, _ = _build_service(document=pending_doc)
-    assert service._claim_document(document=cast(Any, pending_doc)) is True
+    claimed, token = service._claim_document(document=cast(Any, pending_doc))
+    assert claimed is True
+    assert token is not None
     assert pending_doc.status == DocumentStatus.PROCESSING
     assert pending_doc.processing_started_at is not None
+    assert pending_doc.processing_token == token
     assert pending_doc.last_error is None
 
     # 2. Actively processing document -> skipped
+    active_token = uuid4()
     active_doc = _pending_document(
         status=DocumentStatus.PROCESSING,
         processing_started_at=now,
+        processing_token=active_token,
         last_error=None,
     )
-    assert service._claim_document(document=cast(Any, active_doc)) is False
+    claimed, token = service._claim_document(document=cast(Any, active_doc))
+    assert claimed is False
+    assert token is None
+    assert active_doc.processing_token == active_token
 
     # 3. Retrying document (waiting for retry: processing_started_at is set, last_error is set)
+    old_token = uuid4()
     retrying_doc = _pending_document(
         status=DocumentStatus.PROCESSING,
         processing_started_at=now,
+        processing_token=old_token,
         last_error="Temporary 429",
     )
-    assert service._claim_document(document=cast(Any, retrying_doc)) is True
+    claimed, token = service._claim_document(document=cast(Any, retrying_doc))
+    assert claimed is True
+    assert token is not None
+    assert token != old_token
     assert retrying_doc.status == DocumentStatus.PROCESSING
     assert retrying_doc.processing_started_at is not None
+    assert retrying_doc.processing_token == token
     assert retrying_doc.last_error is None
 
 
@@ -165,8 +184,9 @@ def test_skips_document_already_ready_with_chunks() -> None:
         chunk_count=3,
     )
 
-    service.process_document(document_id=document.id)
+    token = service.process_document(document_id=document.id)
 
+    assert token is None
     db.commit.assert_not_called()
     chunk_repository.create.assert_not_called()
     assert document.status == DocumentStatus.READY
@@ -176,14 +196,16 @@ def test_claims_processing_and_persists_immediately() -> None:
     document = _pending_document()
     service, db, _, chunk_repository = _build_service(document=document)
 
-    service.process_document(document_id=document.id)
+    token = service.process_document(document_id=document.id)
 
+    assert token is not None
     # First commit is the PROCESSING claim; second is READY + chunks.
     assert db.commit.call_count == 2
     assert document.status == DocumentStatus.READY
     assert document.last_error is None
     assert document.processed_at is not None
-    assert document.processing_started_at is not None
+    assert document.processing_started_at is None
+    assert document.processing_token is None
     assert chunk_repository.create.call_count == 2
     chunk_repository.delete_by_document_id.assert_called_once_with(
         document_id=document.id
@@ -292,11 +314,10 @@ def test_transient_database_operational_failure_keeps_processing() -> None:
     psycopg_deadlock = psycopg.errors.DeadlockDetected("deadlock detected")
     sa_op_error = OperationalError("statement", {}, psycopg_deadlock)
 
-    service, _db, document_repository, _ = _build_service(
+    service, _db, _document_repository, _ = _build_service(
         document=document,
         db_flush_side_effect=sa_op_error,
     )
-    document_repository.get_for_update.side_effect = [document, document]
 
     with pytest.raises(TransientDatabaseException):
         service.process_document(document_id=document.id)
@@ -314,11 +335,10 @@ def test_permanent_database_integrity_failure_marks_failed() -> None:
     )
     sa_integrity_error = IntegrityError("statement", {}, psycopg_unique)
 
-    service, _db, document_repository, _ = _build_service(
+    service, _db, _document_repository, _ = _build_service(
         document=document,
         db_flush_side_effect=sa_integrity_error,
     )
-    document_repository.get_for_update.side_effect = [document, document]
 
     with pytest.raises(DatabaseException):
         service.process_document(document_id=document.id)
@@ -329,7 +349,7 @@ def test_permanent_database_integrity_failure_marks_failed() -> None:
 
 def test_raises_when_persisted_chunk_count_mismatches() -> None:
     document = _pending_document()
-    service, db, document_repository, chunk_repository = _build_service(
+    service, db, _document_repository, chunk_repository = _build_service(
         document=document,
         chunks=["only-one"],
         embeddings=[[0.1]],
@@ -343,7 +363,6 @@ def test_raises_when_persisted_chunk_count_mismatches() -> None:
         return 0
 
     chunk_repository.count_by_document_id.side_effect = count_side_effect
-    document_repository.get_for_update.side_effect = [document, document]
 
     with pytest.raises(DatabaseException, match="Persisted chunk count mismatch"):
         service.process_document(document_id=document.id)
@@ -417,3 +436,156 @@ def test_resource_not_found_on_fetch_raises_resource_not_found_exception() -> No
         service.process_document(document_id=doc_id)
 
     assert db.rollback.called
+
+
+def test_zombie_reclamation_after_timeout() -> None:
+    from datetime import timedelta
+
+    now = datetime.now(UTC)
+    old_started = now - timedelta(seconds=901)
+    old_token = uuid4()
+
+    # Zombie document: PROCESSING for > 900s without error
+    zombie_doc = _pending_document(
+        status=DocumentStatus.PROCESSING,
+        processing_started_at=old_started,
+        processing_token=old_token,
+        last_error=None,
+    )
+    service, _db, _, _ = _build_service(document=zombie_doc)
+    claimed, token = service._claim_document(document=cast(Any, zombie_doc))
+
+    assert claimed is True
+    assert token is not None
+    assert token != old_token
+    assert zombie_doc.status == DocumentStatus.PROCESSING
+    assert zombie_doc.processing_token == token
+    assert zombie_doc.processing_started_at is not None
+    assert zombie_doc.processing_started_at > old_started
+
+
+def test_fenced_persistence_aborts_when_token_superseded() -> None:
+    document = _pending_document()
+    service, _db, document_repository, chunk_repository = _build_service(
+        document=document
+    )
+
+    initial_get = True
+    superseded_token = uuid4()
+
+    def get_document_side_effect(*, document_id):
+        nonlocal initial_get
+        if initial_get:
+            initial_get = False
+            return document
+        # Second get_for_update (persistence transaction): simulate another worker reclaimed it!
+        document.processing_token = superseded_token
+        return document
+
+    document_repository.get_for_update.side_effect = get_document_side_effect
+
+    result_token = service.process_document(document_id=document.id)
+
+    # Persistence should have aborted
+    assert result_token is None
+    chunk_repository.create.assert_not_called()
+    chunk_repository.delete_by_document_id.assert_not_called()
+    assert document.processing_token == superseded_token
+    assert document.status == DocumentStatus.PROCESSING
+
+
+def test_stale_worker_fail_document_aborts_when_token_superseded() -> None:
+    current_token = uuid4()
+    stale_token = uuid4()
+    document = _pending_document(
+        status=DocumentStatus.PROCESSING,
+        processing_token=current_token,
+        last_error=None,
+    )
+    service, db, _, _ = _build_service(document=document)
+
+    # Stale worker tries to mark failed with stale_token
+    service._fail_document(
+        document_id=document.id,
+        token=stale_token,
+        error="Stale worker failed",
+    )
+
+    assert document.status == DocumentStatus.PROCESSING
+    assert document.processing_token == current_token
+    assert document.last_error is None
+    db.commit.assert_not_called()
+
+
+def test_stale_worker_record_transient_failure_aborts_when_token_superseded() -> None:
+    current_token = uuid4()
+    stale_token = uuid4()
+    document = _pending_document(
+        status=DocumentStatus.PROCESSING,
+        processing_token=current_token,
+        retry_count=0,
+        last_error=None,
+    )
+    service, db, _, _ = _build_service(document=document)
+
+    # Stale worker tries to record transient failure with stale_token
+    service._record_transient_failure(
+        document_id=document.id,
+        token=stale_token,
+        error="Stale transient error",
+    )
+
+    assert document.status == DocumentStatus.PROCESSING
+    assert document.processing_token == current_token
+    assert document.retry_count == 0
+    assert document.last_error is None
+    db.commit.assert_not_called()
+
+
+def test_token_invariants_throughout_lifecycle() -> None:
+    # 1. PENDING: processing_token must be NULL
+    document = _pending_document(status=DocumentStatus.PENDING)
+    assert document.processing_token is None
+
+    service, _db, _, _ = _build_service(document=document)
+
+    # 2. PROCESSING: processing_token must be NOT NULL
+    claimed, token = service._claim_document(document=cast(Any, document))
+    assert claimed is True
+    assert token is not None
+    assert document.status == DocumentStatus.PROCESSING
+    assert document.processing_token == token
+
+    # 3. READY: processing_token must be NULL
+    service._mark_ready(document=cast(Any, document))
+    assert document.status == DocumentStatus.READY
+    assert document.processing_token is None
+    assert document.processing_started_at is None
+
+    # Reset to PROCESSING with token
+    document.status = DocumentStatus.PROCESSING
+    document.processing_token = token
+    # 4. FAILED: processing_token must be NULL
+    service._mark_failed(document=cast(Any, document), error="Terminal failure")
+    assert document.status == DocumentStatus.FAILED
+    assert document.processing_token is None
+    assert document.processing_started_at is None
+
+
+def test_on_token_claimed_callback_invoked_on_claim() -> None:
+    document = _pending_document()
+    service, _db, _, _ = _build_service(document=document)
+
+    captured_tokens: list[UUID] = []
+
+    def callback(token: UUID) -> None:
+        captured_tokens.append(token)
+
+    token = service.process_document(
+        document_id=document.id,
+        on_token_claimed=callback,
+    )
+
+    assert token is not None
+    assert len(captured_tokens) == 1
+    assert captured_tokens[0] == token

@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
+from app.core.config import settings
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.exceptions import (
     AIServiceException,
@@ -49,6 +51,7 @@ class DocumentIngestionService:
         chunker: TextChunker,
         embedding_generator: EmbeddingGenerator,
         storage: StorageService,
+        processing_timeout_seconds: int | None = None,
     ) -> None:
         self._db = db
         self._document_repository = document_repository
@@ -57,6 +60,12 @@ class DocumentIngestionService:
         self._chunker = chunker
         self._embedding_generator = embedding_generator
         self._storage = storage
+        timeout_sec = (
+            processing_timeout_seconds
+            if processing_timeout_seconds is not None
+            else settings.document_processing_timeout_seconds
+        )
+        self._processing_timeout = timedelta(seconds=timeout_sec)
 
     def _get_document_for_update(self, *, document_id: UUID) -> Document:
         """Lock and retrieve the document that should be processed."""
@@ -70,29 +79,33 @@ class DocumentIngestionService:
 
         return document
 
-    def _mark_processing(self, *, document: Document) -> None:
-        """Mark the document as currently being processed."""
+    def _mark_processing(self, *, document: Document, token: UUID) -> None:
+        """Mark the document as currently being processed with an active fencing token."""
 
         now = datetime.now(UTC)
         document.status = DocumentStatus.PROCESSING
         document.processing_started_at = now
+        document.processing_token = token
         document.processed_at = None
         document.last_error = None
 
     def _mark_ready(self, *, document: Document) -> None:
-        """Mark the document as successfully processed."""
+        """Mark the document as successfully processed, clearing the claim token."""
 
         document.status = DocumentStatus.READY
         document.processed_at = datetime.now(UTC)
+        document.processing_started_at = None
+        document.processing_token = None
         document.last_error = None
 
     def _mark_failed(self, *, document: Document, error: str) -> None:
-        """Mark the document as failed and record operational metadata."""
+        """Mark the document as failed and clear the claim token."""
 
         document.status = DocumentStatus.FAILED
         document.last_error = error[:_MAX_ERROR_LENGTH]
         document.retry_count = int(document.retry_count or 0) + 1
         document.processing_started_at = None
+        document.processing_token = None
 
     @staticmethod
     def _ensure_text_was_extracted(*, text: str) -> None:
@@ -155,11 +168,11 @@ class DocumentIngestionService:
 
             self._chunk_repository.create(document_chunk)
 
-    def _claim_document(self, *, document: Document) -> bool:
+    def _claim_document(self, *, document: Document) -> tuple[bool, UUID | None]:
         """
         Decide whether this worker should process the document.
 
-        Returns True when the document was claimed for processing.
+        Returns (True, token) when the document was claimed for processing.
         """
 
         if document.status == DocumentStatus.READY:
@@ -174,31 +187,72 @@ class DocumentIngestionService:
                         "chunk_count": chunk_count,
                     },
                 )
-                return False
+                return False, None
 
+        now = datetime.now(UTC)
+
+        # Explicit state meaning:
+        # PROCESSING + last_error != NULL means the document is awaiting a Celery retry attempt,
+        # not necessarily that a worker is currently actively executing it.
+        # If status is PROCESSING and last_error IS None, a worker is actively executing.
         if (
             document.status == DocumentStatus.PROCESSING
             and document.processing_started_at is not None
             and document.last_error is None
         ):
-            logger.info(
-                "Document already processing",
-                extra={"document_id": str(document.id)},
+            if (now - document.processing_started_at) < self._processing_timeout:
+                logger.info(
+                    "Document already processing",
+                    extra={"document_id": str(document.id)},
+                )
+                return False, None
+
+            logger.warning(
+                "Reclaiming stale processing document (zombie recovery)",
+                extra={
+                    "document_id": str(document.id),
+                    "started_at": str(document.processing_started_at),
+                    "timeout_seconds": self._processing_timeout.total_seconds(),
+                },
             )
-            return False
 
-        self._mark_processing(document=document)
+        token = uuid4()
+        self._mark_processing(document=document, token=token)
         self._db.commit()
-        return True
+        return True, token
 
-    def _record_transient_failure(self, *, document_id: UUID, error: str) -> None:
+    def _record_transient_failure(
+        self, *, document_id: UUID, token: UUID | None, error: str
+    ) -> None:
         """Best-effort persistence of transient failure metadata while keeping document PROCESSING."""
+
+        if token is None:
+            return
 
         try:
             document = self._get_document_for_update(document_id=document_id)
+            if (
+                document is None
+                or document.status != DocumentStatus.PROCESSING
+                or document.processing_token != token
+            ):
+                logger.warning(
+                    "Transient error not recorded: claim superseded or missing",
+                    extra={
+                        "document_id": str(document_id),
+                        "expected_token": str(token),
+                        "current_token": str(document.processing_token)
+                        if document
+                        else None,
+                    },
+                )
+                self._db.rollback()
+                return
+
             document.status = DocumentStatus.PROCESSING
             document.last_error = error[:_MAX_ERROR_LENGTH]
             document.retry_count = int(document.retry_count or 0) + 1
+            # processing_token remains token (invariant: NOT NULL on PROCESSING)
             self._db.commit()
         except Exception:
             self._db.rollback()
@@ -207,11 +261,34 @@ class DocumentIngestionService:
                 extra={"document_id": str(document_id)},
             )
 
-    def _fail_document(self, *, document_id: UUID, error: str) -> None:
+    def _fail_document(
+        self, *, document_id: UUID, token: UUID | None, error: str
+    ) -> None:
         """Best-effort transition of a document to FAILED after a permanent failure or rollback."""
+
+        if token is None:
+            return
 
         try:
             document = self._get_document_for_update(document_id=document_id)
+            if (
+                document is None
+                or document.status == DocumentStatus.READY
+                or document.processing_token != token
+            ):
+                logger.warning(
+                    "Permanent failure not recorded: claim superseded or already READY",
+                    extra={
+                        "document_id": str(document_id),
+                        "expected_token": str(token),
+                        "current_token": str(document.processing_token)
+                        if document
+                        else None,
+                    },
+                )
+                self._db.rollback()
+                return
+
             self._mark_failed(document=document, error=error)
             self._db.commit()
         except Exception:
@@ -221,21 +298,35 @@ class DocumentIngestionService:
                 extra={"document_id": str(document_id)},
             )
 
-    def process_document(self, *, document_id: UUID) -> None:
+    def process_document(
+        self,
+        *,
+        document_id: UUID,
+        on_token_claimed: Callable[[UUID], None] | None = None,
+    ) -> UUID | None:
         """
         Process a persisted document into searchable vector chunks.
 
         The document must already exist in the database and its file
         must already exist in storage.
+
+        If on_token_claimed is provided, it is invoked immediately after the
+        document is atomically claimed in the database and before parsing/chunking,
+        allowing callers (e.g. worker tasks) to record the processing token for failure fencing.
         """
 
         started_at = time.perf_counter()
+        token: UUID | None = None
 
         try:
             document = self._get_document_for_update(document_id=document_id)
 
-            if not self._claim_document(document=document):
-                return
+            claimed, token = self._claim_document(document=document)
+            if not claimed or token is None:
+                return None
+
+            if on_token_claimed is not None:
+                on_token_claimed(token)
 
             logger.info(
                 "Document ingestion started",
@@ -243,6 +334,7 @@ class DocumentIngestionService:
                     "document_id": str(document.id),
                     "status": document.status.value,
                     "retry_count": document.retry_count,
+                    "token": str(token),
                 },
             )
 
@@ -288,6 +380,26 @@ class DocumentIngestionService:
 
             self._ensure_embeddings_match_chunks(chunks=chunks, embeddings=embeddings)
 
+            # Final persistence transaction: re-acquire row lock and verify processing_token
+            document = self._get_document_for_update(document_id=document_id)
+            if (
+                document is None
+                or document.status != DocumentStatus.PROCESSING
+                or document.processing_token != token
+            ):
+                logger.warning(
+                    "Document processing claim expired or superseded by another worker; aborting persistence",
+                    extra={
+                        "document_id": str(document_id),
+                        "expected_token": str(token),
+                        "current_token": str(document.processing_token)
+                        if document
+                        else None,
+                    },
+                )
+                self._db.rollback()
+                return None
+
             self._chunk_repository.delete_by_document_id(document_id=document.id)
 
             self._create_chunks(
@@ -329,10 +441,12 @@ class DocumentIngestionService:
 
             if is_transient:
                 self._record_transient_failure(
-                    document_id=document_id, error=str(error_to_raise)
+                    document_id=document_id, token=token, error=str(error_to_raise)
                 )
             else:
-                self._fail_document(document_id=document_id, error=str(error_to_raise))
+                self._fail_document(
+                    document_id=document_id, token=token, error=str(error_to_raise)
+                )
 
             logger.exception(
                 "Document ingestion failed",
@@ -340,6 +454,7 @@ class DocumentIngestionService:
                     "document_id": str(document_id),
                     "duration_ms": int((time.perf_counter() - started_at) * 1000),
                     "is_transient": is_transient,
+                    "token": str(token) if token else None,
                 },
             )
 
@@ -358,3 +473,4 @@ class DocumentIngestionService:
                 "embedding_time_ms": embedding_duration_ms,
             },
         )
+        return token

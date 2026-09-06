@@ -16,6 +16,7 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.core.storage.base import StorageService
+from app.db.classification import is_unique_constraint_violation
 from app.db.models.document import Document
 from app.db.models.enums import DocumentStatus, OutboxEventType
 from app.db.models.knowledge_base import KnowledgeBase
@@ -205,14 +206,20 @@ class DocumentService:
         except IntegrityError as exc:
             self._db.rollback()
 
+            # For content-addressed storage, an integrity conflict on uq_document_kb_sha256
+            # guarantees that another document with the same content hash already exists
+            # or won the insert race. Never delete the shared storage file on duplicate conflict.
+            if is_unique_constraint_violation(exc, "uq_document_kb_sha256"):
+                raise ConflictException(
+                    "Document with same content already exists"
+                ) from exc
+
             if storage_saved:
                 self._cleanup_storage(
                     storage_path=storage_path,
                 )
 
-            raise ConflictException(
-                "Document with same content already exists"
-            ) from exc
+            raise
 
         except Exception:
             self._db.rollback()

@@ -71,6 +71,11 @@ class OutboxEvent(UUIDMixin, TimestampMixin, Base):
         nullable=True,
     )
 
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     __table_args__ = (
         Index(
             "ix_outbox_events_unpublished",
@@ -82,5 +87,9 @@ class OutboxEvent(UUIDMixin, TimestampMixin, Base):
             "published_at",
             "claimed_at",
             "created_at",
+        ),
+        Index(
+            "ix_outbox_events_dead_lettered",
+            "dead_lettered_at",
         ),
     )

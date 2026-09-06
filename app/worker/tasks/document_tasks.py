@@ -43,20 +43,43 @@ class DocumentProcessTask(Task):
         except (ValueError, TypeError):
             return
 
+        token = getattr(self.request, "processing_token", None)
+        if token is None:
+            # If no processing token was claimed, this worker never owned the claim
+            return
+
         db = SessionLocal()
         try:
             document_repo = DocumentRepository(db=db)
             document = document_repo.get_for_update(document_id=document_id)
-            if document is not None and document.status != DocumentStatus.READY:
+            if (
+                document is not None
+                and document.status != DocumentStatus.READY
+                and document.processing_token == token
+            ):
                 document.status = DocumentStatus.FAILED
                 document.last_error = str(exc)[:4000]
                 document.processing_started_at = None
+                document.processing_token = None
                 db.commit()
                 logger.info(
                     "Document marked as FAILED in Celery on_failure",
                     extra={
                         "document_id": str(document_id),
                         "task_id": task_id,
+                        "token": str(token),
+                    },
+                )
+            else:
+                logger.warning(
+                    "Celery on_failure skipped: document was READY or superseded by newer token",
+                    extra={
+                        "document_id": str(document_id),
+                        "task_id": task_id,
+                        "task_token": str(token),
+                        "db_token": str(document.processing_token)
+                        if document
+                        else None,
                     },
                 )
         except Exception:
@@ -103,13 +126,27 @@ def process_document(self, document_id: str) -> None:
     try:
         ingestion_service = build_document_ingestion_service(db=db)
 
-        ingestion_service.process_document(document_id=UUID(document_id))
+        def _on_token_claimed(token: UUID) -> None:
+            # Lightweight plumbing only: store the token on the task request context
+            # for Celery on_failure fencing. No I/O or fallible operations.
+            # NOTE ON CRASH WINDOW: The DB claim transaction commits before this callback runs.
+            # If the process or container dies in that microscopic window, on_failure will not
+            # have the token, and the document remains in PROCESSING with the new token.
+            # Stale timeout lease recovery (document_processing_timeout_seconds) is the intentional
+            # safety mechanism that reclaims the document.
+            self.request.processing_token = token
+
+        token = ingestion_service.process_document(
+            document_id=UUID(document_id),
+            on_token_claimed=_on_token_claimed,
+        )
 
         logger.info(
             "Document processing task completed",
             extra={
                 "document_id": document_id,
                 "celery_retries": celery_retries,
+                "token": str(token) if token else None,
             },
         )
 

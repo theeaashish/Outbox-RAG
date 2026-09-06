@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     # redis
     redis_url: str = Field(default="redis://localhost:6379/0")
 
+    # background tasks & outbox
+    document_processing_timeout_seconds: int = Field(default=900, ge=60)
+    outbox_claim_lease_seconds: int = Field(default=300, ge=30)
+    max_outbox_attempts: int = Field(default=5, ge=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

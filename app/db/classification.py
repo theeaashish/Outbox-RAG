@@ -150,3 +150,38 @@ def classify_database_exception(
         return TransientDatabaseException(transient_message)
 
     return DatabaseException(permanent_message)
+
+
+def is_unique_constraint_violation(
+    exc: BaseException,
+    constraint_name: str,
+) -> bool:
+    """
+    Check if an exception is a PostgreSQL unique constraint violation (SQLSTATE 23505)
+    matching the specified constraint name via native driver diagnostic metadata.
+    """
+    sqlstate = _get_sqlstate(exc)
+    if sqlstate is not None and sqlstate != "23505":
+        return False
+
+    orig = getattr(exc, "orig", exc)
+
+    if sqlstate == "23505":
+        # PostgreSQL via psycopg3: inspect Diagnostic object.
+        diag = getattr(orig, "diag", None)
+        if diag is not None:
+            diag_constraint = getattr(diag, "constraint_name", None)
+            if diag_constraint is not None:
+                return diag_constraint == constraint_name
+
+        # Some PostgreSQL DBAPI wrappers expose the constraint directly.
+        orig_constraint = getattr(orig, "constraint_name", None)
+        if orig_constraint is not None:
+            return orig_constraint == constraint_name
+
+        return False
+
+    # Non-PostgreSQL SQLAlchemy test dialects do not expose SQLSTATE metadata.
+    if not isinstance(exc, IntegrityError):
+        return False
+    return constraint_name in str(exc)

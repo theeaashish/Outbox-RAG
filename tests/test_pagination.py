@@ -9,12 +9,14 @@ from sqlalchemy.orm import sessionmaker
 from app.core.exceptions import ValidationException
 from app.core.pagination import CursorCodec, CursorResource, InvalidCursorError
 from app.db.base import Base
-from app.db.models import Conversation, KnowledgeBase, Message
+from app.db.models import Conversation, KnowledgeBase, Message, Project, User
 from app.db.models.enums import MessageRole
+from app.dependencies.auth import get_current_user
 from app.modules.conversations.service import ConversationService
 from app.repositories.conversation import ConversationRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
+from app.repositories.project import ProjectRepository
 
 
 def _sqlite_session():
@@ -22,6 +24,7 @@ def _sqlite_session():
     Base.metadata.create_all(
         engine,
         tables=[
+            cast(Table, Project.__table__),
             cast(Table, KnowledgeBase.__table__),
             cast(Table, Conversation.__table__),
             cast(Table, Message.__table__),
@@ -92,8 +95,12 @@ def test_cursor_codec_accepts_previous_signing_key():
 
 def test_message_keyset_pagination_is_newest_first_and_stable():
     engine, session = _sqlite_session()
-    knowledge_base = KnowledgeBase(name="Docs")
-    conversation = Conversation(knowledge_base=knowledge_base)
+    user_id = uuid4()
+    project_id = uuid4()
+    knowledge_base = KnowledgeBase(name="Docs", user_id=user_id, project_id=project_id)
+    conversation = Conversation(
+        knowledge_base=knowledge_base, user_id=user_id, project_id=project_id
+    )
     session.add(conversation)
     session.commit()
 
@@ -179,8 +186,11 @@ def test_message_keyset_pagination_is_newest_first_and_stable():
 
 def test_conversation_keyset_pagination_scopes_to_knowledge_base():
     engine, session = _sqlite_session()
-    kb_one = KnowledgeBase(name="One")
-    kb_two = KnowledgeBase(name="Two")
+    user_id = uuid4()
+    project_id_1 = uuid4()
+    project_id_2 = uuid4()
+    kb_one = KnowledgeBase(name="One", user_id=user_id, project_id=project_id_1)
+    kb_two = KnowledgeBase(name="Two", user_id=user_id, project_id=project_id_2)
     session.add_all([kb_one, kb_two])
     session.commit()
 
@@ -189,12 +199,16 @@ def test_conversation_keyset_pagination_scopes_to_knowledge_base():
         session.add(
             Conversation(
                 knowledge_base_id=kb_one.id,
+                user_id=user_id,
+                project_id=project_id_1,
                 created_at=started_at + timedelta(seconds=index),
             )
         )
     session.add(
         Conversation(
             knowledge_base_id=kb_two.id,
+            user_id=user_id,
+            project_id=project_id_2,
             created_at=started_at + timedelta(seconds=10),
         )
     )
@@ -215,7 +229,9 @@ def test_conversation_keyset_pagination_scopes_to_knowledge_base():
 
 def test_conversation_service_rejects_both_after_and_before():
     engine, session = _sqlite_session()
-    knowledge_base = KnowledgeBase(name="Docs")
+    user_id = uuid4()
+    project_id = uuid4()
+    knowledge_base = KnowledgeBase(name="Docs", user_id=user_id, project_id=project_id)
     session.add(knowledge_base)
     session.commit()
 
@@ -223,12 +239,14 @@ def test_conversation_service_rejects_both_after_and_before():
         db=session,
         conversation_repository=ConversationRepository(db=session),
         knowledge_base_repository=KnowledgeBaseRepository(db=session),
+        project_repository=ProjectRepository(db=session),
         message_repository=MessageRepository(db=session),
         cursor_codec=CursorCodec(signing_key="test-key"),
     )
 
     with pytest.raises(ValidationException, match="after or before"):
         service.list_conversations_cursor(
+            user_id=user_id,
             knowledge_base_id=knowledge_base.id,
             page_size=10,
             after="cursor-a",
@@ -241,7 +259,9 @@ def test_conversation_service_rejects_both_after_and_before():
 
 def test_conversation_service_rejects_invalid_cursor():
     engine, session = _sqlite_session()
-    knowledge_base = KnowledgeBase(name="Docs")
+    user_id = uuid4()
+    project_id = uuid4()
+    knowledge_base = KnowledgeBase(name="Docs", user_id=user_id, project_id=project_id)
     session.add(knowledge_base)
     session.commit()
 
@@ -249,12 +269,14 @@ def test_conversation_service_rejects_invalid_cursor():
         db=session,
         conversation_repository=ConversationRepository(db=session),
         knowledge_base_repository=KnowledgeBaseRepository(db=session),
+        project_repository=ProjectRepository(db=session),
         message_repository=MessageRepository(db=session),
         cursor_codec=CursorCodec(signing_key="test-key"),
     )
 
     with pytest.raises(ValidationException, match="Invalid cursor"):
         service.list_conversations_cursor(
+            user_id=user_id,
             knowledge_base_id=knowledge_base.id,
             page_size=10,
             after="not-a-cursor",
@@ -268,6 +290,7 @@ class _StubConversationController:
     def list_conversations_cursor(
         self,
         *,
+        user_id: object = None,
         knowledge_base_id: object,
         page_size: int,
         after: str | None = None,
@@ -292,6 +315,7 @@ class _StubConversationController:
     def list_messages_cursor(
         self,
         *,
+        user_id: object = None,
         conversation_id: object,
         page_size: int,
         after: str | None = None,
@@ -316,6 +340,7 @@ class _StubConversationController:
     def list_conversations(
         self,
         *,
+        user_id: object = None,
         knowledge_base_id: object,
         limit: int = 50,
         offset: int = 0,
@@ -327,6 +352,7 @@ class _StubConversationController:
     def list_messages(
         self,
         *,
+        user_id: object = None,
         conversation_id: object,
         limit: int = 100,
         offset: int = 0,
@@ -342,7 +368,14 @@ def test_v2_cursor_routes_and_v1_deprecation_headers():
     from app.dependencies.conversations import get_conversation_controller
     from app.main import app
 
+    test_user = User(
+        id=uuid4(),
+        email="test@example.com",
+        email_normalized="test@example.com",
+        name="Test",
+    )
     app.dependency_overrides[get_conversation_controller] = _StubConversationController
+    app.dependency_overrides[get_current_user] = lambda: test_user
     with TestClient(app) as client:
         kb_id = uuid4()
         conv_id = uuid4()
