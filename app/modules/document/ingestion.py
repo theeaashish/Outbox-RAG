@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.config import settings
+from app.core.document.models import ParsedDocument
+from app.core.document.normalizer import DocumentNormalizer
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.exceptions import (
     AIServiceException,
@@ -51,6 +53,7 @@ class DocumentIngestionService:
         chunker: TextChunker,
         embedding_generator: EmbeddingGenerator,
         storage: StorageService,
+        normalizer: DocumentNormalizer | None = None,
         processing_timeout_seconds: int | None = None,
     ) -> None:
         self._db = db
@@ -60,6 +63,9 @@ class DocumentIngestionService:
         self._chunker = chunker
         self._embedding_generator = embedding_generator
         self._storage = storage
+        self._normalizer = (
+            normalizer if normalizer is not None else DocumentNormalizer()
+        )
         timeout_sec = (
             processing_timeout_seconds
             if processing_timeout_seconds is not None
@@ -115,6 +121,12 @@ class DocumentIngestionService:
             raise ValidationException(
                 "The document parser did not extract any text from the document."
             )
+
+    @staticmethod
+    def _flatten_document(document: ParsedDocument) -> str:
+        """Flatten canonical blocks at the boundary of the legacy text chunker."""
+
+        return "\n\n".join(block.text for block in document.blocks)
 
     @staticmethod
     def _ensure_embeddings_match_chunks(
@@ -353,7 +365,9 @@ class DocumentIngestionService:
                 },
             )
 
-            text = parser.extract_text(content=content)
+            parsed_document = parser.parse(content=content)
+            normalized_document = self._normalizer.normalize(parsed_document)
+            text = self._flatten_document(normalized_document)
 
             self._ensure_text_was_extracted(text=text)
 

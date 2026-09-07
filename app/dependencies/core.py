@@ -15,6 +15,7 @@ from app.core.auth.passwords import PasswordHasherService
 from app.core.auth.session import SessionTokenService
 from app.core.config import settings
 from app.core.document.hasher import FileHasher
+from app.core.document.normalizer import DocumentNormalizer
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
 from app.core.pagination import CursorCodec
@@ -37,6 +38,13 @@ def get_embedding_generator() -> EmbeddingGenerator:
 def get_document_parser_registry() -> DocumentParserRegistry:
     """Return the application's document parser registry"""
     return DocumentParserRegistry()
+
+
+@lru_cache
+def get_document_normalizer() -> DocumentNormalizer:
+    """Return the application's canonical document normalizer."""
+
+    return DocumentNormalizer()
 
 
 @lru_cache

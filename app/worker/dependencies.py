@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 
 from app.core.ai.chunking.base import TextChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
+from app.core.document.normalizer import DocumentNormalizer
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.storage import StorageService
 from app.dependencies.core import (
+    get_document_normalizer,
     get_document_parser_registry,
     get_embedding_generator,
     get_storage_service,
@@ -29,6 +31,8 @@ def build_document_ingestion_service(
 
     parser_registry: DocumentParserRegistry = get_document_parser_registry()
 
+    normalizer: DocumentNormalizer = get_document_normalizer()
+
     chunker: TextChunker = get_text_chunker()
 
     embedding_generator: EmbeddingGenerator = get_embedding_generator()
@@ -43,4 +47,5 @@ def build_document_ingestion_service(
         chunker=chunker,
         embedding_generator=embedding_generator,
         storage=storage,
+        normalizer=normalizer,
     )
