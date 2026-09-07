@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
@@ -11,10 +11,10 @@ from uuid import UUID, uuid4
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.ai.chunking.base import TextChunker
+from app.core.ai.chunking.base import DocumentChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.config import settings
-from app.core.document.models import ParsedDocument
+from app.core.document.models import Chunk, ParsedDocument
 from app.core.document.normalizer import DocumentNormalizer
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.exceptions import (
@@ -50,7 +50,7 @@ class DocumentIngestionService:
         document_repository: DocumentRepository,
         chunk_repository: DocumentChunkRepository,
         parser_registry: DocumentParserRegistry,
-        chunker: TextChunker,
+        chunker: DocumentChunker,
         embedding_generator: EmbeddingGenerator,
         storage: StorageService,
         normalizer: DocumentNormalizer | None = None,
@@ -114,24 +114,20 @@ class DocumentIngestionService:
         document.processing_token = None
 
     @staticmethod
-    def _ensure_text_was_extracted(*, text: str) -> None:
-        """Ensure the parser produced meaningful text."""
+    def _ensure_document_has_content(*, document: ParsedDocument) -> None:
+        """Ensure the parser produced meaningful content."""
 
-        if not text.strip():
+        if not document.blocks or not any(
+            block.text.strip() for block in document.blocks
+        ):
             raise ValidationException(
                 "The document parser did not extract any text from the document."
             )
 
     @staticmethod
-    def _flatten_document(document: ParsedDocument) -> str:
-        """Flatten canonical blocks at the boundary of the legacy text chunker."""
-
-        return "\n\n".join(block.text for block in document.blocks)
-
-    @staticmethod
     def _ensure_embeddings_match_chunks(
         *,
-        chunks: list[str],
+        chunks: Sequence[Chunk],
         embeddings: list[list[float]],
     ) -> None:
         """Ensure every chunk has exactly one embedding."""
@@ -160,22 +156,24 @@ class DocumentIngestionService:
         self,
         *,
         document: Document,
-        chunks: list[str],
+        chunks: Sequence[Chunk],
         embeddings: list[list[float]],
     ) -> None:
         """Persist the chunks and their embeddings in the database."""
 
-        for index, (chunk, embedding) in enumerate(
-            zip(chunks, embeddings, strict=True)
-        ):
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
             document_chunk = DocumentChunk(
                 document_id=document.id,
-                chunk_index=index,
-                content=chunk,
+                chunk_index=chunk.chunk_index,
+                content=chunk.content,
                 embedding=embedding,
                 char_start=None,
                 char_end=None,
-                chunk_metadata=None,
+                chunk_metadata={
+                    "source_block_indexes": list(chunk.source_block_indexes),
+                    "page_start": chunk.page_start,
+                    "page_end": chunk.page_end,
+                },
             )
 
             self._chunk_repository.create(document_chunk)
@@ -367,15 +365,14 @@ class DocumentIngestionService:
 
             parsed_document = parser.parse(content=content)
             normalized_document = self._normalizer.normalize(parsed_document)
-            text = self._flatten_document(normalized_document)
 
-            self._ensure_text_was_extracted(text=text)
+            self._ensure_document_has_content(document=normalized_document)
 
-            chunks = self._chunker.split(text=text)
+            chunks = self._chunker.split(document=normalized_document)
 
             if not chunks:
                 raise ValidationException(
-                    "The document chunker did not produce any chunks from the text."
+                    "The document chunker did not produce any chunks from the document."
                 )
 
             logger.info(
@@ -386,8 +383,9 @@ class DocumentIngestionService:
                 },
             )
 
+            chunk_texts = [chunk.content for chunk in chunks]
             embedding_started_at = time.perf_counter()
-            embeddings = self._embedding_generator.embed_documents(chunks)
+            embeddings = self._embedding_generator.embed_documents(chunk_texts)
             embedding_duration_ms = int(
                 (time.perf_counter() - embedding_started_at) * 1000
             )

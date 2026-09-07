@@ -18,6 +18,13 @@ LOGGING_CONFIG = {
             "formatter": "default",
         },
     },
+    "loggers": {
+        "sqlalchemy.engine": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
     "root": {
         "handlers": ["console"],
         "level": settings.log_level,

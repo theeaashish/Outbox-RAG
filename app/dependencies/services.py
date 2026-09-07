@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.core.ai.chunking.base import TextChunker
+from app.core.ai.chunking.base import DocumentChunker
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.auth.passwords import PasswordHasherService
 from app.core.auth.session import SessionTokenService
@@ -16,13 +16,13 @@ from app.core.document.validator import UploadValidator
 from app.core.storage import StorageService
 from app.db.session import SessionLocal
 from app.dependencies.core import (
+    get_document_chunker,
     get_document_parser_registry,
     get_embedding_generator,
     get_file_hasher,
     get_password_hasher,
     get_session_token_service,
     get_storage_service,
-    get_text_chunker,
     get_upload_validator,
 )
 from app.dependencies.repositories import (
@@ -66,10 +66,13 @@ DocumentChunkRepositoryDep = Annotated[
     Depends(get_document_chunk_repository),
 ]
 
-TextChunkerDep = Annotated[
-    TextChunker,
-    Depends(get_text_chunker),
+DocumentChunkerDep = Annotated[
+    DocumentChunker,
+    Depends(get_document_chunker),
 ]
+
+TextChunkerDep = DocumentChunkerDep
+
 
 EmbeddingGeneratorDep = Annotated[
     EmbeddingGenerator,

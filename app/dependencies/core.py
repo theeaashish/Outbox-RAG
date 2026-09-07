@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.core.ai.chunking.base import TextChunker
-from app.core.ai.chunking.recursive import RecursiveTextChunker
+from app.core.ai.chunking.base import DocumentChunker
+from app.core.ai.chunking.recursive import DocumentAwareChunker
 from app.core.ai.context.assembler import ContextAssembler
 from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.ai.embeddings.gemini import GeminiEmbeddingGenerator
@@ -23,9 +23,13 @@ from app.core.storage import LocalFilesystemStorage, StorageService
 
 
 @lru_cache
-def get_text_chunker() -> TextChunker:
-    """Return the application's text chunker"""
-    return RecursiveTextChunker()
+def get_document_chunker() -> DocumentChunker:
+    """Return the application's document-aware chunker."""
+    return DocumentAwareChunker()
+
+
+# Compatibility-only alias
+get_text_chunker = get_document_chunker
 
 
 @lru_cache

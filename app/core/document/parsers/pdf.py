@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 class PDFParser(DocumentParser):
     """Parser for converting PDF text and page structure to canonical blocks."""
 
-    _LIST_MARKER_RE = re.compile(
-        r"^\s*(?:[-*+\u2022\u2023\u25e6\u25aa]\s+|\d+[.)]\s+)"
-    )
+    _LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+\u2022\u2023\u25e6\u25aa]\s+|\d+[.)]\s+)")
 
     @staticmethod
     def _title(reader: PdfReader) -> str | None:
