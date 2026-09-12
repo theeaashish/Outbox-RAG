@@ -6,6 +6,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, contains_eager
 
 from app.core.ai.retrieval.models import RetrievedChunk
+from app.core.constants import EMBEDDING_DIMENSION
+from app.core.exceptions import ValidationException
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.models.enums import DocumentStatus
 from app.repositories.base import BaseRepository
@@ -62,6 +64,13 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         Retrieve the most similar chunks within a knowledge base using
         cosine similarity. Only READY documents are searched.
         """
+        if len(embedding) != EMBEDDING_DIMENSION:
+            raise ValidationException(
+                f"Embedding dimension mismatch: expected {EMBEDDING_DIMENSION}, "
+                f"got {len(embedding)}"
+            )
+        if limit <= 0:
+            raise ValidationException("Limit must be positive")
 
         distance = DocumentChunk.embedding.cosine_distance(embedding)
         similarity = (1 - distance).label("similarity")
