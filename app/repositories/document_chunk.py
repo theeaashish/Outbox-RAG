@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import math
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, contains_eager
 
 from app.core.ai.retrieval.models import RetrievedChunk
-from app.core.constants import EMBEDDING_DIMENSION
+from app.core.constants import EMBEDDING_DIMENSION, MAX_RETRIEVAL_LIMIT
 from app.core.exceptions import ValidationException
 from app.db.models import Document, DocumentChunk, KnowledgeBase
 from app.db.models.enums import DocumentStatus
@@ -64,13 +65,28 @@ class DocumentChunkRepository(BaseRepository[DocumentChunk]):
         Retrieve the most similar chunks within a knowledge base using
         cosine similarity. Only READY documents are searched.
         """
+        if not isinstance(embedding, (list, tuple)):
+            raise ValidationException("Embedding must be a list or tuple of floats")
+
         if len(embedding) != EMBEDDING_DIMENSION:
             raise ValidationException(
                 f"Embedding dimension mismatch: expected {EMBEDDING_DIMENSION}, "
                 f"got {len(embedding)}"
             )
-        if limit <= 0:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValidationException("Limit must be positive")
+        if limit > MAX_RETRIEVAL_LIMIT:
+            raise ValidationException(
+                f"Limit must be between 1 and {MAX_RETRIEVAL_LIMIT}"
+            )
+
+        if threshold is not None and (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not (0.0 <= threshold <= 1.0)
+            or math.isnan(threshold)
+        ):
+            raise ValidationException("Threshold must be between 0.0 and 1.0")
 
         distance = DocumentChunk.embedding.cosine_distance(embedding)
         similarity = (1 - distance).label("similarity")

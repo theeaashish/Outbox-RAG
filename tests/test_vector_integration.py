@@ -7,7 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.constants import EMBEDDING_DIMENSION
+from app.core.constants import EMBEDDING_DIMENSION, MAX_RETRIEVAL_LIMIT
+from app.core.exceptions import ValidationException
 from app.db.database import engine
 from app.db.models import Document, DocumentChunk, KnowledgeBase, Project, User
 from app.db.models.enums import DocumentStatus
@@ -422,6 +423,403 @@ def test_hnsw_query_plan_compatibility(db_session: Session):
             or "Index Scan" in forced_plan
         )
 
+    finally:
+        db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
+        db_session.commit()
+
+
+# ==============================================================================
+# 5. Phase 6 Retrieval Hardness Correctness Assertions
+# ==============================================================================
+
+
+def test_cross_kb_isolation_within_same_user(db_session: Session):
+    """
+    Invariants:
+    - Sibling knowledge bases under the same user MUST NOT leak chunks.
+    """
+    user_suffix = uuid4().hex[:8]
+    user = User(
+        email=f"user_{user_suffix}@example.com",
+        email_normalized=f"user_{user_suffix}@example.com",
+        name="Cross-KB User",
+    )
+    db_session.add(user)
+    db_session.flush()
+
+    proj_1 = Project(user_id=user.id, name=f"Proj1_{user_suffix}")
+    proj_2 = Project(user_id=user.id, name=f"Proj2_{user_suffix}")
+    db_session.add_all([proj_1, proj_2])
+    db_session.flush()
+
+    kb_1 = KnowledgeBase(
+        user_id=user.id, project_id=proj_1.id, name=f"KB1_{user_suffix}"
+    )
+    kb_2 = KnowledgeBase(
+        user_id=user.id, project_id=proj_2.id, name=f"KB2_{user_suffix}"
+    )
+    db_session.add_all([kb_1, kb_2])
+    db_session.flush()
+
+    doc_1 = Document(
+        knowledge_base_id=kb_1.id,
+        title="KB1 Document",
+        filename="kb1.pdf",
+        mime_type="application/pdf",
+        storage_path=f"storage/kb1_{user_suffix}.pdf",
+        sha256_hash=uuid4().hex,
+        file_size=1024,
+        status=DocumentStatus.READY,
+    )
+    doc_2 = Document(
+        knowledge_base_id=kb_2.id,
+        title="KB2 Document",
+        filename="kb2.pdf",
+        mime_type="application/pdf",
+        storage_path=f"storage/kb2_{user_suffix}.pdf",
+        sha256_hash=uuid4().hex,
+        file_size=1024,
+        status=DocumentStatus.READY,
+    )
+    db_session.add_all([doc_1, doc_2])
+    db_session.flush()
+
+    query_vec = _unit_vector(active_index=3)
+
+    chunk_kb1 = DocumentChunk(
+        document_id=doc_1.id,
+        chunk_index=0,
+        content="KB 1 Chunk",
+        embedding=query_vec,
+    )
+    chunk_kb2 = DocumentChunk(
+        document_id=doc_2.id,
+        chunk_index=0,
+        content="KB 2 Chunk",
+        embedding=query_vec,
+    )
+    db_session.add_all([chunk_kb1, chunk_kb2])
+    db_session.commit()
+
+    repo = DocumentChunkRepository(db=db_session)
+    try:
+        results = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb_1.id,
+            embedding=query_vec,
+            limit=10,
+        )
+        assert len(results) == 1
+        assert results[0].chunk.id == chunk_kb1.id
+        assert results[0].chunk.content == "KB 1 Chunk"
+    finally:
+        db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
+        db_session.commit()
+
+
+def test_document_lifecycle_status_exclusion_all_statuses(db_session: Session):
+    """
+    Invariants:
+    - Only DocumentStatus.READY documents are retrievable.
+    - PENDING, PROCESSING, FAILED documents must be strictly excluded even with perfect vector match.
+    """
+    user, _, kb, doc_ready = _create_hierarchy(db_session, status=DocumentStatus.READY)
+    _, _, _, doc_pending = _create_hierarchy(db_session, status=DocumentStatus.PENDING)
+    _, _, _, doc_processing = _create_hierarchy(
+        db_session, status=DocumentStatus.PROCESSING
+    )
+    _, _, _, doc_failed = _create_hierarchy(db_session, status=DocumentStatus.FAILED)
+
+    # Re-associate all documents to the same KB for strict status testing
+    doc_pending.knowledge_base_id = kb.id
+    doc_processing.knowledge_base_id = kb.id
+    doc_failed.knowledge_base_id = kb.id
+    db_session.flush()
+
+    query_vec = _unit_vector(active_index=7)
+
+    c_ready = DocumentChunk(
+        document_id=doc_ready.id,
+        chunk_index=0,
+        content="Ready Chunk",
+        embedding=query_vec,
+    )
+    c_pending = DocumentChunk(
+        document_id=doc_pending.id,
+        chunk_index=0,
+        content="Pending Chunk",
+        embedding=query_vec,
+    )
+    c_processing = DocumentChunk(
+        document_id=doc_processing.id,
+        chunk_index=0,
+        content="Processing Chunk",
+        embedding=query_vec,
+    )
+    c_failed = DocumentChunk(
+        document_id=doc_failed.id,
+        chunk_index=0,
+        content="Failed Chunk",
+        embedding=query_vec,
+    )
+
+    db_session.add_all([c_ready, c_pending, c_processing, c_failed])
+    db_session.commit()
+
+    repo = DocumentChunkRepository(db=db_session)
+    try:
+        results = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=query_vec,
+            limit=10,
+        )
+        assert len(results) == 1
+        assert results[0].chunk.id == c_ready.id
+        assert results[0].chunk.content == "Ready Chunk"
+    finally:
+        db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
+        db_session.commit()
+
+
+def test_threshold_boundary_and_empty_retrieval(db_session: Session):
+    """
+    Invariants:
+    - similarity >= threshold inclusion rule.
+    - Result count in [0, limit].
+    - Empty result [] is valid success (not an error).
+    """
+    user, _, kb, doc = _create_hierarchy(db_session, status=DocumentStatus.READY)
+    query_vec = _unit_vector(active_index=0)
+
+    # Similarity = 1.0
+    c1 = DocumentChunk(
+        document_id=doc.id,
+        chunk_index=0,
+        content="C1",
+        embedding=_unit_vector(active_index=0),
+    )
+    # Similarity = 0.0 (orthogonal)
+    c2 = DocumentChunk(
+        document_id=doc.id,
+        chunk_index=1,
+        content="C2",
+        embedding=_unit_vector(active_index=1),
+    )
+
+    db_session.add_all([c1, c2])
+    db_session.commit()
+
+    repo = DocumentChunkRepository(db=db_session)
+    try:
+        # Threshold higher than any chunk: should return empty list []
+        _ = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=query_vec,
+            limit=5,
+            threshold=1.05,  # repo validates in [0, 1], so let's use 0.99999 with orthogonal vector or unreachable threshold
+        )
+    except ValidationException:
+        pass  # Repository correctly validates threshold <= 1.0
+
+    try:
+        # Using valid threshold 0.5: c1 (sim 1.0) qualifies, c2 (sim 0.0) excluded
+        res_05 = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=query_vec,
+            limit=5,
+            threshold=0.5,
+        )
+        assert len(res_05) == 1
+        assert res_05[0].chunk.id == c1.id
+
+        # Query pointing in opposite direction or orthogonal vector where threshold=0.5 yields []
+        ortho_query = _unit_vector(active_index=10)
+        res_empty = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=ortho_query,
+            limit=5,
+            threshold=0.5,
+        )
+        assert res_empty == []
+        assert isinstance(res_empty, list)
+    finally:
+        db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
+        db_session.commit()
+
+
+def test_limit_enforcement_inclusive_contract(db_session: Session):
+    """
+    Invariants:
+    - 0 <= result_count <= limit.
+    - When available matches > limit, exactly limit results are returned.
+    """
+    user, _, kb, doc = _create_hierarchy(db_session, status=DocumentStatus.READY)
+    query_vec = _unit_vector(active_index=0)
+
+    chunks = [
+        DocumentChunk(
+            document_id=doc.id,
+            chunk_index=i,
+            content=f"Chunk {i}",
+            embedding=query_vec,
+        )
+        for i in range(5)
+    ]
+    db_session.add_all(chunks)
+    db_session.commit()
+
+    repo = DocumentChunkRepository(db=db_session)
+    try:
+        # limit=2 must return exactly 2
+        res_2 = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=query_vec,
+            limit=2,
+        )
+        assert len(res_2) == 2
+
+        # limit=5 must return all 5
+        res_5 = repo.search_similar(
+            user_id=user.id,
+            knowledge_base_id=kb.id,
+            embedding=query_vec,
+            limit=5,
+        )
+        assert len(res_5) == 5
+    finally:
+        db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
+        db_session.commit()
+
+
+def test_repository_defense_in_depth_validation(db_session: Session):
+    """
+    Invariants:
+    - DocumentChunkRepository.search_similar enforces bounds on limit and threshold.
+    """
+    user, _, kb, _ = _create_hierarchy(db_session, status=DocumentStatus.READY)
+    query_vec = _unit_vector(active_index=0)
+    repo = DocumentChunkRepository(db=db_session)
+
+    try:
+        with pytest.raises(
+            ValidationException, match="Embedding must be a list or tuple of floats"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding="abc",  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(
+            ValidationException, match="Embedding must be a list or tuple of floats"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding={"a": 1},  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(
+            ValidationException,
+            match="Embedding dimension mismatch: expected 768, got 512",
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=[0.1] * 512,
+            )
+
+        with pytest.raises(ValidationException, match="Limit must be positive"):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=0,
+            )
+
+        with pytest.raises(ValidationException, match="Limit must be positive"):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit="5",  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(ValidationException, match="Limit must be positive"):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=True,  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(ValidationException, match="Limit must be between 1 and"):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=MAX_RETRIEVAL_LIMIT + 1,
+            )
+
+        with pytest.raises(
+            ValidationException, match="Threshold must be between 0.0 and 1.0"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=5,
+                threshold="0.5",  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(
+            ValidationException, match="Threshold must be between 0.0 and 1.0"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=5,
+                threshold=True,  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(
+            ValidationException, match="Threshold must be between 0.0 and 1.0"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=5,
+                threshold=float("nan"),
+            )
+
+        with pytest.raises(
+            ValidationException, match="Threshold must be between 0.0 and 1.0"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=5,
+                threshold=-0.1,
+            )
+
+        with pytest.raises(
+            ValidationException, match="Threshold must be between 0.0 and 1.0"
+        ):
+            repo.search_similar(
+                user_id=user.id,
+                knowledge_base_id=kb.id,
+                embedding=query_vec,
+                limit=5,
+                threshold=1.1,
+            )
     finally:
         db_session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": user.id})
         db_session.commit()

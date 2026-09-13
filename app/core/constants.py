@@ -35,3 +35,6 @@ PERMANENT_AI_STATUS_CODES: Final[frozenset[int]] = frozenset(
 
 
 CELERY_VISIBILITY_TIMEOUT_SECONDS: Final[int] = 3600
+
+MAX_RETRIEVAL_LIMIT: Final[int] = 20
+"""Canonical upper bound for chunk retrieval limit across all layers."""

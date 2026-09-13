@@ -19,6 +19,8 @@ class ContextChunk:
     chunk_index: int
     similarity: float
     content: str
+    page_start: int | None = None
+    page_end: int | None = None
 
 
 @dataclass(slots=True, frozen=True)

@@ -48,6 +48,8 @@ class ContextAssembler:
                 chunk_index=item.chunk.chunk_index,
                 similarity=item.similarity,
                 content=item.chunk.content,
+                page_start=item.provenance.page_start,
+                page_end=item.provenance.page_end,
             )
             for index, item in enumerate(retrieved_chunks, start=1)
         ]

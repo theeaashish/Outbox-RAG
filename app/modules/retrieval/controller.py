@@ -48,6 +48,8 @@ class RetrievalController:
                     chunk_index=rc.chunk.chunk_index,
                     content=rc.chunk.content,
                     score=rc.similarity,
+                    page_start=rc.provenance.page_start,
+                    page_end=rc.provenance.page_end,
                     char_start=rc.chunk.char_start,
                     char_end=rc.chunk.char_end,
                 )

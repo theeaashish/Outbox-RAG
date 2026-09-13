@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
+from app.core.constants import MAX_RETRIEVAL_LIMIT
 
 
 class RetrievalRequest(BaseModel):
@@ -18,7 +19,7 @@ class RetrievalRequest(BaseModel):
     limit: int = Field(
         default_factory=lambda: settings.default_top_k,
         ge=1,
-        le=20,
+        le=MAX_RETRIEVAL_LIMIT,
         description="Maximum number of chunks to retrieve.",
     )
 
@@ -32,6 +33,17 @@ class RetrievalRequest(BaseModel):
         ),
     )
 
+    @field_validator("query", mode="before")
+    @classmethod
+    def normalize_query(cls, value: object) -> object:
+        """Trim whitespace and reject blank or whitespace-only queries."""
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Query cannot be empty or whitespace-only")
+        return trimmed
+
 
 class RetrievedChunkResponse(BaseModel):
     """Response model for a retrieved chunk."""
@@ -43,10 +55,16 @@ class RetrievedChunkResponse(BaseModel):
 
     content: str
 
-    score: float
+    score: float = Field(
+        ...,
+        description="Cosine similarity score in range [-1.0, 1.0], where higher is more similar.",
+    )
 
-    char_start: int | None
-    char_end: int | None
+    page_start: int | None = None
+    page_end: int | None = None
+
+    char_start: int | None = None
+    char_end: int | None = None
 
 
 class RetrievalResponse(BaseModel):
