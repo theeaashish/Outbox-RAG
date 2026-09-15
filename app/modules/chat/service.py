@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.ai.context.assembler import ContextAssembler
+from app.core.ai.context.citations import CitationValidator
 from app.core.ai.context.models import AssembledContext
 from app.core.ai.llm.base import LLMProvider
 from app.core.ai.llm.message_adapter import to_chat_message
@@ -149,6 +150,7 @@ class ChatService:
         retrieval_limit: int,
         similarity_threshold: float | None,
         stream_max_buffered_characters: int,
+        citation_validator: CitationValidator | None = None,
     ) -> None:
         self._db = db
         self._conversation_repository = conversation_repository
@@ -161,6 +163,7 @@ class ChatService:
         self._retrieval_limit = retrieval_limit
         self._similarity_threshold = similarity_threshold
         self._stream_max_buffered_characters = stream_max_buffered_characters
+        self._citation_validator = citation_validator or CitationValidator()
 
     def _get_conversation(
         self,
@@ -184,7 +187,11 @@ class ChatService:
                 limit=self._history_message_limit,
             )
         )
-        return [to_chat_message(message) for message in messages]
+        return [
+            to_chat_message(message)
+            for message in messages
+            if message.role in (MessageRole.USER, MessageRole.ASSISTANT)
+        ]
 
     @staticmethod
     def _normalize_assistant_content(*, content: str) -> str:
@@ -314,6 +321,22 @@ class ChatService:
         assistant_content = self._normalize_assistant_content(
             content=llm_response.content
         )
+
+        valid_citations = {chunk.citation for chunk in prepared.context.chunks}
+        validation = self._citation_validator.validate(
+            content=assistant_content,
+            valid_citations=valid_citations,
+        )
+        if not validation.is_valid:
+            logger.warning(
+                "LLM generated invalid citation IDs",
+                extra={
+                    "conversation_id": str(prepared.conversation_id),
+                    "invalid_citations": validation.invalid_citations,
+                    "valid_citations": list(valid_citations),
+                },
+            )
+
         assistant_message = self._persist_messages(
             user_id=user_id,
             conversation_id=prepared.conversation_id,

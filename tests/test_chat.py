@@ -24,8 +24,9 @@ from app.core.exceptions import (
     ResourceNotFoundException,
 )
 from app.db.base import Base
-from app.db.models import Conversation, KnowledgeBase, Message
+from app.db.models import Conversation, KnowledgeBase, Message, User
 from app.db.models.enums import MessageRole
+from app.dependencies.auth import get_current_user
 from app.dependencies.chat import get_chat_controller
 from app.main import app
 from app.modules.chat import mapper
@@ -85,8 +86,14 @@ def test_list_recent_by_conversation_returns_chronological_window():
         ],
     )
     session = sessionmaker(bind=engine)()
-    knowledge_base = KnowledgeBase(name="Handbook")
-    conversation = Conversation(knowledge_base=knowledge_base)
+    user_id = uuid4()
+    project_id = uuid4()
+    knowledge_base = KnowledgeBase(
+        name="Handbook", user_id=user_id, project_id=project_id
+    )
+    conversation = Conversation(
+        knowledge_base=knowledge_base, user_id=user_id, project_id=project_id
+    )
     session.add(conversation)
     session.commit()
 
@@ -115,9 +122,16 @@ def test_list_recent_by_conversation_returns_chronological_window():
 
 def _build_chat_service():
     db = MagicMock()
-    conversation = Conversation(id=uuid4(), knowledge_base_id=uuid4())
+    user_id = uuid4()
+    project_id = uuid4()
+    conversation = Conversation(
+        id=uuid4(),
+        user_id=user_id,
+        project_id=project_id,
+        knowledge_base_id=uuid4(),
+    )
     conversation_repository = MagicMock()
-    conversation_repository.get_by_id.return_value = conversation
+    conversation_repository.get_by_user_and_id.return_value = conversation
     conversation_repository.exists.return_value = True
     message_repository = MagicMock()
     message_repository.list_recent_by_conversation.return_value = [
@@ -163,6 +177,7 @@ def _build_chat_service():
     )
     return {
         "service": service,
+        "user_id": user_id,
         "db": db,
         "conversation": conversation,
         "conversation_repository": conversation_repository,
@@ -179,6 +194,7 @@ def test_chat_service_generates_context_and_persists_a_message_pair():
     dependencies = _build_chat_service()
 
     result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -190,6 +206,7 @@ def test_chat_service_generates_context_and_persists_a_message_pair():
         limit=20,
     )
     dependencies["retrieval_service"].retrieve.assert_called_once_with(
+        user_id=dependencies["user_id"],
         knowledge_base_id=dependencies["conversation"].knowledge_base_id,
         query="Current question",
         limit=5,
@@ -225,6 +242,7 @@ def test_chat_service_does_not_persist_when_generation_fails():
 
     with pytest.raises(AIServiceException):
         dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
             conversation_id=dependencies["conversation"].id,
             content="Current question",
         )
@@ -239,6 +257,7 @@ def test_chat_service_rolls_back_message_pair_when_commit_fails():
 
     with pytest.raises(DatabaseException):
         dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
             conversation_id=dependencies["conversation"].id,
             content="Current question",
         )
@@ -249,10 +268,11 @@ def test_chat_service_rolls_back_message_pair_when_commit_fails():
 
 def test_chat_service_rejects_missing_conversation_before_external_calls():
     dependencies = _build_chat_service()
-    dependencies["conversation_repository"].get_by_id.return_value = None
+    dependencies["conversation_repository"].get_by_user_and_id.return_value = None
 
     with pytest.raises(ResourceNotFoundException):
         dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
             conversation_id=uuid4(),
             content="Current question",
         )
@@ -281,6 +301,7 @@ def test_chat_service_stream_orders_events_and_persists_atomically():
     )
     dependencies["llm_provider"].stream.return_value = fake_stream
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -330,6 +351,7 @@ def test_chat_service_stream_persists_length_finish_reason():
         ]
     )
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -357,6 +379,7 @@ def test_chat_service_stream_does_not_persist_on_empty_completion():
         ]
     )
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -381,6 +404,7 @@ def test_chat_service_stream_rejects_invalid_finish_reason():
         ]
     )
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -405,6 +429,7 @@ def test_chat_service_stream_enforces_output_character_limit():
         ]
     )
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
@@ -429,9 +454,11 @@ def test_chat_service_stream_close_releases_provider_without_commit():
     )
     dependencies["llm_provider"].stream.return_value = fake_stream
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
+
     stream = dependencies["service"].stream_prepared_turn(prepared=prepared)
 
     assert next(stream).type == ChatStreamEventType.METADATA
@@ -458,9 +485,11 @@ def test_chat_service_stream_does_not_persist_when_conversation_deleted():
         ]
     )
     prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
         conversation_id=dependencies["conversation"].id,
         content="Current question",
     )
+    dependencies["conversation_repository"].get_by_user_and_id.return_value = None
 
     with pytest.raises(ResourceNotFoundException):
         list(dependencies["service"].stream_prepared_turn(prepared=prepared))
@@ -573,6 +602,7 @@ class _StubChatController:
     async def send_message(
         self,
         *,
+        user_id: object = None,
         conversation_id: object,
         content: str,
     ) -> ChatResponse:
@@ -596,10 +626,59 @@ class _StubChatController:
 
 @pytest.fixture
 def chat_client():
+    mock_user = User(
+        id=uuid4(),
+        email="test@example.com",
+        name="Test User",
+    )
     app.dependency_overrides[get_chat_controller] = _StubChatController
+    app.dependency_overrides[get_current_user] = lambda: mock_user
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
+
+
+def test_chat_service_logs_invalid_citations_without_mutating_content():
+    dependencies = _build_chat_service()
+    dependencies["llm_provider"].generate.return_value = LLMResponse(
+        content="Ground fact [1] and hallucinated [99]",
+        model="test-model",
+        finish_reason="stop",
+        usage=None,
+    )
+    context = AssembledContext(
+        query="Question",
+        block='[Source 1] Document: "Doc"\n---\nGround fact',
+        chunks=[
+            ContextChunk(
+                citation=1,
+                document_id=uuid4(),
+                document_name="Doc",
+                chunk_index=0,
+                similarity=0.9,
+                content="Ground fact",
+            )
+        ],
+    )
+    dependencies["service"].prepare_turn = MagicMock(
+        return_value=dependencies["service"].prepare_turn(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="Question",
+        )
+    )
+    # Patch context in prepared turn
+    prepared = dependencies["service"].prepare_turn.return_value
+    object.__setattr__(prepared, "context", context)
+
+    result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Question",
+    )
+
+    # Non-destructive: content is preserved with [99] intact
+    assert result.assistant_message.content == "Ground fact [1] and hallucinated [99]"
 
 
 def test_chat_route_returns_response_and_validation_errors(chat_client: TestClient):

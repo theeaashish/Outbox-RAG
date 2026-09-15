@@ -73,7 +73,7 @@ def get_storage_service() -> StorageService:
 def get_context_assembler() -> ContextAssembler:
     """Return the application's context assembler."""
 
-    return ContextAssembler()
+    return ContextAssembler(max_characters=settings.chat_context_max_characters)
 
 
 @lru_cache

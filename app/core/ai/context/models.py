@@ -32,3 +32,8 @@ class AssembledContext:
     query: str
     block: str
     chunks: list[ContextChunk]
+
+    @property
+    def has_evidence(self) -> bool:
+        """Computed property: returns True if at least one context chunk was supplied."""
+        return bool(self.chunks)

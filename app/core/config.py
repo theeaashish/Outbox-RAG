@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     gemini_embedding_model: str = Field(default="gemini-embedding-001")
 
-    gemini_chat_temperature: float = Field(default=0.7)
+    gemini_chat_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
 
     gemini_chat_max_output_tokens: int = Field(default=4_096, ge=1)
 
@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     chat_history_message_limit: int = Field(default=20, ge=1)
 
     chat_max_message_characters: int = Field(default=10_000, ge=1)
+    chat_context_max_characters: int = Field(default=16_000, ge=500)
 
     chat_stream_first_token_timeout_seconds: int = Field(default=20, ge=1)
 

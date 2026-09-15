@@ -155,6 +155,33 @@ class GeminiLLMProvider(LLMProvider):
 
         llm_response = self._to_response(response)
 
+        if llm_response.finish_reason == "safety":
+            logger.warning(
+                "LLM generation blocked by safety filters",
+                extra={"model": self._model_name, "message_count": len(messages)},
+            )
+            raise AIServiceException("LLM generation blocked by safety filters")
+
+        if llm_response.finish_reason == "error":
+            logger.error(
+                "LLM generation ended with error finish reason",
+                extra={"model": self._model_name, "message_count": len(messages)},
+            )
+            raise AIServiceException("LLM generation failed")
+
+        if llm_response.finish_reason not in {"stop", "length"}:
+            logger.error(
+                "LLM generation ended with unexpected finish reason",
+                extra={
+                    "model": self._model_name,
+                    "message_count": len(messages),
+                    "finish_reason": llm_response.finish_reason,
+                },
+            )
+            raise AIServiceException(
+                "LLM generation completed with unaccepted finish reason"
+            )
+
         logger.info(
             "LLM response generated",
             extra=self._response_log_extra(llm_response, len(messages)),
