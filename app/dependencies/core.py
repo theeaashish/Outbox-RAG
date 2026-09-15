@@ -10,7 +10,9 @@ from app.core.ai.embeddings.gemini import GeminiEmbeddingGenerator
 from app.core.ai.llm.base import LLMProvider
 from app.core.ai.llm.gemini import GeminiLLMProvider
 from app.core.ai.prompting.base import PromptBuilder
+from app.core.ai.prompting.conversational import ConversationalPromptBuilder
 from app.core.ai.prompting.rag import RAGPromptBuilder
+from app.core.ai.routing.router import QueryRouter
 from app.core.auth.passwords import PasswordHasherService
 from app.core.auth.session import SessionTokenService
 from app.core.config import settings
@@ -81,6 +83,20 @@ def get_prompt_builder() -> PromptBuilder:
     """Return the application's RAG prompt builder."""
 
     return RAGPromptBuilder()
+
+
+@lru_cache
+def get_conversational_prompt_builder() -> ConversationalPromptBuilder:
+    """Return the application's conversational prompt builder."""
+
+    return ConversationalPromptBuilder()
+
+
+@lru_cache
+def get_query_router() -> QueryRouter:
+    """Return the application's deterministic query router."""
+
+    return QueryRouter()
 
 
 @lru_cache

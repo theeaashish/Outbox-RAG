@@ -7,11 +7,15 @@ from fastapi import Depends
 from app.core.ai.context.assembler import ContextAssembler
 from app.core.ai.llm.base import LLMProvider
 from app.core.ai.prompting.base import PromptBuilder
+from app.core.ai.prompting.conversational import ConversationalPromptBuilder
+from app.core.ai.routing.router import QueryRouter
 from app.core.config import settings
 from app.dependencies.core import (
     get_context_assembler,
+    get_conversational_prompt_builder,
     get_llm_provider,
     get_prompt_builder,
+    get_query_router,
 )
 from app.dependencies.repositories import (
     DBSession,
@@ -44,6 +48,16 @@ PromptBuilderDep = Annotated[
     Depends(get_prompt_builder),
 ]
 
+ConversationalPromptBuilderDep = Annotated[
+    ConversationalPromptBuilder,
+    Depends(get_conversational_prompt_builder),
+]
+
+QueryRouterDep = Annotated[
+    QueryRouter,
+    Depends(get_query_router),
+]
+
 LLMProviderDep = Annotated[
     LLMProvider,
     Depends(get_llm_provider),
@@ -57,6 +71,8 @@ def get_chat_service(
     retrieval_service: RetrievalServiceDep,
     context_assembler: ContextAssemblerDep,
     prompt_builder: PromptBuilderDep,
+    conversational_prompt_builder: ConversationalPromptBuilderDep,
+    query_router: QueryRouterDep,
     llm_provider: LLMProviderDep,
 ) -> ChatService:
     """Return a configured ChatService."""
@@ -68,6 +84,8 @@ def get_chat_service(
         retrieval_service=retrieval_service,
         context_assembler=context_assembler,
         prompt_builder=prompt_builder,
+        conversational_prompt_builder=conversational_prompt_builder,
+        query_router=query_router,
         llm_provider=llm_provider,
         history_message_limit=settings.chat_history_message_limit,
         retrieval_limit=settings.default_top_k,

@@ -22,6 +22,9 @@ from app.core.ai.llm.models import (
     LLMUsage,
 )
 from app.core.ai.prompting.base import PromptBuilder
+from app.core.ai.prompting.conversational import ConversationalPromptBuilder
+from app.core.ai.routing.models import ConversationMode, QueryRoutingDecision
+from app.core.ai.routing.router import QueryRouter
 from app.core.exceptions import (
     AIServiceException,
     DatabaseException,
@@ -41,7 +44,8 @@ class ChatTurnResult:
     """Application result for a completed, persisted chat turn."""
 
     assistant_message: Message
-    context: AssembledContext
+    context: AssembledContext | None
+    routing: QueryRoutingDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +56,9 @@ class PreparedChatTurn:
     knowledge_base_id: UUID
     user_id: UUID
     user_content: str
-    context: AssembledContext
+    context: AssembledContext | None
     prompt: list[ChatMessage]
+    routing: QueryRoutingDecision
 
 
 from enum import StrEnum
@@ -67,7 +72,7 @@ class ChatStreamMetadata:
 
 @dataclass(frozen=True, slots=True)
 class ChatStreamCitations:
-    context: AssembledContext
+    context: AssembledContext | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +83,7 @@ class ChatStreamToken:
 @dataclass(frozen=True, slots=True)
 class ChatStreamComplete:
     assistant_message: Message
-    context: AssembledContext
+    context: AssembledContext | None
     model: str
     finish_reason: str
     usage: LLMUsage | None
@@ -145,6 +150,8 @@ class ChatService:
         retrieval_service: RetrievalService,
         context_assembler: ContextAssembler,
         prompt_builder: PromptBuilder,
+        conversational_prompt_builder: ConversationalPromptBuilder,
+        query_router: QueryRouter,
         llm_provider: LLMProvider,
         history_message_limit: int,
         retrieval_limit: int,
@@ -158,6 +165,8 @@ class ChatService:
         self._retrieval_service = retrieval_service
         self._context_assembler = context_assembler
         self._prompt_builder = prompt_builder
+        self._conversational_prompt_builder = conversational_prompt_builder
+        self._query_router = query_router
         self._llm_provider = llm_provider
         self._history_message_limit = history_message_limit
         self._retrieval_limit = retrieval_limit
@@ -217,22 +226,35 @@ class ChatService:
             )
             knowledge_base_id = conversation.knowledge_base_id
             history = self._load_history(conversation_id=conversation_id)
-            retrieved_chunks = self._retrieval_service.retrieve(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
+
+            routing = self._query_router.route(
                 query=content,
-                limit=self._retrieval_limit,
-                threshold=self._similarity_threshold,
-            )
-            context = self._context_assembler.assemble(
-                query=content,
-                retrieved_chunks=retrieved_chunks,
-            )
-            prompt = self._prompt_builder.build(
-                context=context,
                 conversation=history,
-                user_query=content,
             )
+
+            if routing.mode == ConversationMode.CASUAL:
+                context = None
+                prompt = self._conversational_prompt_builder.build(
+                    conversation=history,
+                    user_query=content,
+                )
+            else:
+                retrieved_chunks = self._retrieval_service.retrieve(
+                    user_id=user_id,
+                    knowledge_base_id=knowledge_base_id,
+                    query=content,
+                    limit=self._retrieval_limit,
+                    threshold=self._similarity_threshold,
+                )
+                context = self._context_assembler.assemble(
+                    query=content,
+                    retrieved_chunks=retrieved_chunks,
+                )
+                prompt = self._prompt_builder.build(
+                    context=context,
+                    conversation=history,
+                    user_query=content,
+                )
         except Exception:
             self._db.rollback()
             raise
@@ -243,8 +265,10 @@ class ChatService:
             extra={
                 "conversation_id": str(conversation_id),
                 "knowledge_base_id": str(knowledge_base_id),
+                "routing_mode": routing.mode.value,
+                "routing_reason": routing.reason.value,
                 "history_count": len(history),
-                "context_count": len(context.chunks),
+                "context_count": 0 if context is None else len(context.chunks),
                 "prompt_message_count": len(prompt),
                 "latency_ms": round((perf_counter() - preparation_started_at) * 1000),
             },
@@ -256,6 +280,7 @@ class ChatService:
             user_content=content,
             context=context,
             prompt=prompt,
+            routing=routing,
         )
 
     def _persist_messages(
@@ -322,20 +347,21 @@ class ChatService:
             content=llm_response.content
         )
 
-        valid_citations = {chunk.citation for chunk in prepared.context.chunks}
-        validation = self._citation_validator.validate(
-            content=assistant_content,
-            valid_citations=valid_citations,
-        )
-        if not validation.is_valid:
-            logger.warning(
-                "LLM generated invalid citation IDs",
-                extra={
-                    "conversation_id": str(prepared.conversation_id),
-                    "invalid_citations": validation.invalid_citations,
-                    "valid_citations": list(valid_citations),
-                },
+        if prepared.context is not None:
+            valid_citations = {chunk.citation for chunk in prepared.context.chunks}
+            validation = self._citation_validator.validate(
+                content=assistant_content,
+                valid_citations=valid_citations,
             )
+            if not validation.is_valid:
+                logger.warning(
+                    "LLM generated invalid citation IDs",
+                    extra={
+                        "conversation_id": str(prepared.conversation_id),
+                        "invalid_citations": validation.invalid_citations,
+                        "valid_citations": list(valid_citations),
+                    },
+                )
 
         assistant_message = self._persist_messages(
             user_id=user_id,
@@ -346,6 +372,7 @@ class ChatService:
         return ChatTurnResult(
             assistant_message=assistant_message,
             context=prepared.context,
+            routing=prepared.routing,
         )
 
     def stream_prepared_turn(
@@ -369,7 +396,9 @@ class ChatService:
                     type=ChatStreamEventType.METADATA,
                     payload=ChatStreamMetadata(
                         conversation_id=prepared.conversation_id,
-                        source_count=len(prepared.context.chunks),
+                        source_count=0
+                        if prepared.context is None
+                        else len(prepared.context.chunks),
                     ),
                 )
                 yield ChatStreamEvent(
@@ -446,7 +475,9 @@ class ChatService:
                         "finish_reason": completion.finish_reason,
                         "delta_count": delta_count,
                         "streamed_characters": buffered_characters,
-                        "citation_count": len(prepared.context.chunks),
+                        "citation_count": 0
+                        if prepared.context is None
+                        else len(prepared.context.chunks),
                         "time_to_first_token_ms": (
                             None
                             if first_token_at is None

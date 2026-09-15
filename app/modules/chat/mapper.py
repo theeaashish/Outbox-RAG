@@ -39,15 +39,18 @@ def to_chat_source_response(context_chunk: ContextChunk) -> ChatSourceResponse:
 def to_chat_response(
     *,
     assistant_message: Message,
-    context: AssembledContext,
+    context: AssembledContext | None,
 ) -> ChatResponse:
     """Map a completed chat turn to its API response."""
 
+    sources = (
+        [to_chat_source_response(context_chunk) for context_chunk in context.chunks]
+        if context is not None
+        else []
+    )
     return ChatResponse(
         assistant_message=to_message_response(assistant_message),
-        sources=[
-            to_chat_source_response(context_chunk) for context_chunk in context.chunks
-        ],
+        sources=sources,
     )
 
 
@@ -67,10 +70,14 @@ def to_sse_event(event: ChatStreamEvent) -> dict[str, str]:
 
     if event.type == ChatStreamEventType.CITATIONS:
         assert isinstance(event.payload, ChatStreamCitations)
-        sources = [
-            to_chat_source_response(context_chunk).model_dump(mode="json")
-            for context_chunk in event.payload.context.chunks
-        ]
+        sources = (
+            [
+                to_chat_source_response(context_chunk).model_dump(mode="json")
+                for context_chunk in event.payload.context.chunks
+            ]
+            if event.payload.context is not None
+            else []
+        )
         return {"event": event.type.value, "data": json.dumps(sources)}
 
     if event.type == ChatStreamEventType.TOKEN:

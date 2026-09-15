@@ -17,6 +17,7 @@ from app.core.ai.llm.models import (
     LLMStreamDelta,
     LLMUsage,
 )
+from app.core.ai.routing import ConversationMode, QueryRouter, RoutingReason
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
@@ -155,6 +156,9 @@ def _build_chat_service():
     context_assembler.assemble.return_value = context
     prompt_builder = MagicMock()
     prompt_builder.build.return_value = []
+    conversational_prompt_builder = MagicMock()
+    conversational_prompt_builder.build.return_value = []
+    query_router = QueryRouter()
     llm_provider = MagicMock()
     llm_provider.generate.return_value = LLMResponse(
         content="Grounded answer",
@@ -169,6 +173,8 @@ def _build_chat_service():
         retrieval_service=retrieval_service,
         context_assembler=context_assembler,
         prompt_builder=prompt_builder,
+        conversational_prompt_builder=conversational_prompt_builder,
+        query_router=query_router,
         llm_provider=llm_provider,
         history_message_limit=20,
         retrieval_limit=5,
@@ -186,6 +192,8 @@ def _build_chat_service():
         "context": context,
         "context_assembler": context_assembler,
         "prompt_builder": prompt_builder,
+        "conversational_prompt_builder": conversational_prompt_builder,
+        "query_router": query_router,
         "llm_provider": llm_provider,
     }
 
@@ -718,3 +726,207 @@ def test_chat_route_uses_existing_exception_responses(chat_client: TestClient):
         "success": False,
         "error": {"message": "Failed to generate LLM response"},
     }
+
+
+def test_chat_service_casual_turn_skips_retrieval_and_context_assembly():
+    dependencies = _build_chat_service()
+
+    result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Hello there!",
+    )
+
+    dependencies["retrieval_service"].retrieve.assert_not_called()
+    dependencies["context_assembler"].assemble.assert_not_called()
+    dependencies["prompt_builder"].build.assert_not_called()
+    dependencies["conversational_prompt_builder"].build.assert_called_once()
+    assert result.context is None
+    assert result.routing.mode == ConversationMode.CASUAL
+    assert result.routing.reason == RoutingReason.EXPLICIT_CASUAL
+
+    result.assistant_message.id = uuid4()
+    result.assistant_message.created_at = datetime.now(UTC)
+    result.assistant_message.updated_at = datetime.now(UTC)
+    response = mapper.to_chat_response(
+        assistant_message=result.assistant_message,
+        context=result.context,
+    )
+    assert response.sources == []
+    assert response.assistant_message.content == "Grounded answer"
+
+
+def test_chat_service_knowledge_turn_executes_retrieval_and_context_assembly():
+    dependencies = _build_chat_service()
+
+    result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="What is the refund policy?",
+    )
+
+    dependencies["retrieval_service"].retrieve.assert_called_once_with(
+        user_id=dependencies["user_id"],
+        knowledge_base_id=dependencies["conversation"].knowledge_base_id,
+        query="What is the refund policy?",
+        limit=5,
+        threshold=0.7,
+    )
+    dependencies["context_assembler"].assemble.assert_called_once()
+    dependencies["prompt_builder"].build.assert_called_once()
+    dependencies["conversational_prompt_builder"].build.assert_not_called()
+    assert result.context == dependencies["context"]
+    assert result.routing.mode == ConversationMode.KNOWLEDGE
+    assert result.routing.reason == RoutingReason.EXPLICIT_KNOWLEDGE
+
+
+def test_chat_service_stream_casual_turn_emits_empty_sources_and_zero_count():
+    dependencies = _build_chat_service()
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content="Hi! "),
+            LLMStreamDelta(content="How can I help?"),
+            LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+
+    prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Thank you!",
+    )
+    assert prepared.context is None
+    assert prepared.routing.mode == ConversationMode.CASUAL
+    assert prepared.routing.reason == RoutingReason.EXPLICIT_CASUAL
+    dependencies["retrieval_service"].retrieve.assert_not_called()
+    dependencies["context_assembler"].assemble.assert_not_called()
+
+    events = list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+    assert len(events) == 5
+
+    assert events[0].type == ChatStreamEventType.METADATA
+    assert isinstance(events[0].payload, ChatStreamMetadata)
+    assert events[0].payload.source_count == 0
+
+    assert events[1].type == ChatStreamEventType.CITATIONS
+    assert isinstance(events[1].payload, ChatStreamCitations)
+    assert events[1].payload.context is None
+
+    assert events[2].type == ChatStreamEventType.TOKEN
+    assert isinstance(events[2].payload, ChatStreamToken)
+    assert events[2].payload.delta == "Hi! "
+
+    assert events[3].type == ChatStreamEventType.TOKEN
+    assert isinstance(events[3].payload, ChatStreamToken)
+    assert events[3].payload.delta == "How can I help?"
+
+    assert events[4].type == ChatStreamEventType.COMPLETE
+    assert isinstance(events[4].payload, ChatStreamComplete)
+    assert events[4].payload.context is None
+    assert events[4].payload.finish_reason == "stop"
+
+
+def test_chat_service_follow_up_routing_continuity():
+    dependencies = _build_chat_service()
+
+    # Case A: Previous user message in history was a Knowledge query
+    dependencies["message_repository"].list_recent_by_conversation.return_value = [
+        Message(
+            id=uuid4(),
+            conversation_id=dependencies["conversation"].id,
+            role=MessageRole.USER,
+            content="What are the system requirements?",
+        ),
+        Message(
+            id=uuid4(),
+            conversation_id=dependencies["conversation"].id,
+            role=MessageRole.ASSISTANT,
+            content="You need 8GB RAM.",
+        ),
+    ]
+
+    result_knowledge_follow_up = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Can you explain that in more detail?",
+    )
+    assert result_knowledge_follow_up.routing.mode == ConversationMode.KNOWLEDGE
+    assert (
+        result_knowledge_follow_up.routing.reason == RoutingReason.KNOWLEDGE_FOLLOW_UP
+    )
+    dependencies["retrieval_service"].retrieve.assert_called_once()
+    dependencies["context_assembler"].assemble.assert_called_once()
+
+    # Reset mocks
+    dependencies["retrieval_service"].retrieve.reset_mock()
+    dependencies["context_assembler"].assemble.reset_mock()
+    dependencies["conversational_prompt_builder"].build.reset_mock()
+
+    # Case B: Previous user message in history was Casual
+    dependencies["message_repository"].list_recent_by_conversation.return_value = [
+        Message(
+            id=uuid4(),
+            conversation_id=dependencies["conversation"].id,
+            role=MessageRole.USER,
+            content="Hello there!",
+        ),
+        Message(
+            id=uuid4(),
+            conversation_id=dependencies["conversation"].id,
+            role=MessageRole.ASSISTANT,
+            content="Hello! How can I assist you today?",
+        ),
+    ]
+
+    result_casual_follow_up = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Can you explain that in more detail?",
+    )
+    assert result_casual_follow_up.routing.mode == ConversationMode.CASUAL
+    assert result_casual_follow_up.routing.reason == RoutingReason.CASUAL_FOLLOW_UP
+    dependencies["retrieval_service"].retrieve.assert_not_called()
+    dependencies["context_assembler"].assemble.assert_not_called()
+    dependencies["conversational_prompt_builder"].build.assert_called_once()
+    assert result_casual_follow_up.context is None
+
+
+def test_to_sse_event_casual_turn_payload_contract():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    assistant_message = Message(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        role=MessageRole.ASSISTANT,
+        content="You're welcome!",
+        created_at=now,
+        updated_at=now,
+    )
+
+    citations_event = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.CITATIONS,
+            payload=ChatStreamCitations(context=None),
+        )
+    )
+    assert citations_event["event"] == "citations"
+    assert citations_event["data"] == "[]"
+
+    complete_event = mapper.to_sse_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.COMPLETE,
+            payload=ChatStreamComplete(
+                assistant_message=assistant_message,
+                context=None,
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        )
+    )
+    assert complete_event["event"] == "complete"
+    assert '"assistant_message"' in complete_event["data"]
+    assert '"finish_reason": "stop"' in complete_event["data"]
