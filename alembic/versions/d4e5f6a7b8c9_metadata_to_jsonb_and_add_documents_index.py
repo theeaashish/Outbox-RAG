@@ -35,6 +35,7 @@ def upgrade() -> None:
         "documents",
         ["knowledge_base_id", sa.text("created_at DESC")],
         unique=False,
+        if_not_exists=True,
     )
 
 

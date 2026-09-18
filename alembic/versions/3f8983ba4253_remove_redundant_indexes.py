@@ -22,14 +22,36 @@ DOCUMENTS_CREATED_INDEX = "ix_documents_kb_created_at_desc"
 
 def upgrade() -> None:
     """Drop redundant indexes, convert chunk metadata to jsonb, and add document list index."""
-    op.drop_index(op.f("ix_messages_conversation_id"), table_name="messages")
-    op.drop_index(op.f("ix_messages_conversation_created_at"), table_name="messages")
     op.drop_index(
-        op.f("ix_conversations_knowledge_base_id"), table_name="conversations"
+        op.f("ix_messages_conversation_id"),
+        table_name="messages",
+        if_exists=True,
     )
-    op.drop_index(op.f("ix_documents_knowledge_base_id"), table_name="documents")
-    op.drop_index(op.f("ix_documents_sha256_hash"), table_name="documents")
-    op.drop_index(op.f("ix_document_chunks_document_id"), table_name="document_chunks")
+    op.drop_index(
+        op.f("ix_messages_conversation_created_at"),
+        table_name="messages",
+        if_exists=True,
+    )
+    op.drop_index(
+        op.f("ix_conversations_knowledge_base_id"),
+        table_name="conversations",
+        if_exists=True,
+    )
+    op.drop_index(
+        op.f("ix_documents_knowledge_base_id"),
+        table_name="documents",
+        if_exists=True,
+    )
+    op.drop_index(
+        op.f("ix_documents_sha256_hash"),
+        table_name="documents",
+        if_exists=True,
+    )
+    op.drop_index(
+        op.f("ix_document_chunks_document_id"),
+        table_name="document_chunks",
+        if_exists=True,
+    )
 
     op.execute(
         "ALTER TABLE document_chunks ALTER COLUMN metadata TYPE jsonb USING metadata::jsonb"
