@@ -22,7 +22,9 @@ from app.modules.chat.service import (
     ChatService,
     ChatStreamEvent,
     ChatStreamEventType,
+    ChatStreamToken,
 )
+from app.modules.chat.streaming import ChatStreamCancelReason
 
 _STREAM_END = object()
 
@@ -79,68 +81,163 @@ class ChatController:
         stream = self._chat_service.stream_prepared_turn(prepared=prepared)
 
         async def events() -> AsyncIterator[dict[str, Any]]:
-            started_at = asyncio.get_running_loop().time()
-            awaiting_first_token = True
+            loop = asyncio.get_running_loop()
+            generation_start = loop.time()
+            total_deadline = (
+                generation_start + settings.chat_stream_total_timeout_seconds
+            )
+            ttft_deadline = (
+                generation_start + settings.chat_stream_first_token_timeout_seconds
+            )
+
+            first_token_received = False
+            last_token_time: float | None = None
+            terminal_emitted = False
+            pending_task: asyncio.Task[Any] | None = None
+
+            def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+                if not task.cancelled():
+                    task.exception()
+
             try:
                 while True:
                     if await request.is_disconnected():
+                        stream.request_cancel(ChatStreamCancelReason.CLIENT_DISCONNECT)
                         return
 
-                    elapsed = asyncio.get_running_loop().time() - started_at
-                    remaining = settings.chat_stream_total_timeout_seconds - elapsed
-                    if remaining <= 0:
-                        yield mapper.to_sse_error(
-                            code="stream_timeout",
-                            message="Assistant response timed out",
+                    now = loop.time()
+
+                    if not first_token_received:
+                        token_deadline = ttft_deadline
+                    else:
+                        assert last_token_time is not None
+                        token_deadline = (
+                            last_token_time + settings.chat_stream_idle_timeout_seconds
                         )
+
+                    active_deadline = min(total_deadline, token_deadline)
+                    remaining_timeout = active_deadline - now
+
+                    if total_deadline <= token_deadline:
+                        timeout_reason = ChatStreamCancelReason.TOTAL_TIMEOUT
+                        timeout_code = "TOTAL_TIMEOUT"
+                        timeout_message = (
+                            "Assistant response exceeded the generation time limit"
+                        )
+                    elif not first_token_received:
+                        timeout_reason = ChatStreamCancelReason.TTFT_TIMEOUT
+                        timeout_code = "TTFT_TIMEOUT"
+                        timeout_message = (
+                            "Assistant response timed out waiting for the first token"
+                        )
+                    else:
+                        timeout_reason = ChatStreamCancelReason.IDLE_TIMEOUT
+                        timeout_code = "IDLE_TIMEOUT"
+                        timeout_message = "Assistant response stalled while generating"
+
+                    if remaining_timeout <= 0:
+                        cancelled = stream.request_cancel(timeout_reason)
+                        if cancelled and not terminal_emitted:
+                            terminal_emitted = True
+                            yield mapper.to_sse_error(
+                                code=timeout_code,
+                                message=timeout_message,
+                            )
                         return
 
-                    timeout = min(
-                        remaining,
-                        (
-                            settings.chat_stream_first_token_timeout_seconds
-                            if awaiting_first_token
-                            else settings.chat_stream_idle_timeout_seconds
-                        ),
+                    pending_task = asyncio.create_task(
+                        run_in_threadpool(_next_stream_event, stream)
                     )
+                    pending_task.add_done_callback(_consume_task_exception)
                     try:
                         event = await asyncio.wait_for(
-                            run_in_threadpool(_next_stream_event, stream),
-                            timeout=timeout,
+                            asyncio.shield(pending_task),
+                            timeout=remaining_timeout,
                         )
                     except TimeoutError:
-                        yield mapper.to_sse_error(
-                            code="stream_timeout",
-                            message="Assistant response timed out",
-                        )
-                        return
+                        cancelled = stream.request_cancel(timeout_reason)
+                        if cancelled:
+                            if not terminal_emitted:
+                                terminal_emitted = True
+                                yield mapper.to_sse_error(
+                                    code=timeout_code,
+                                    message=timeout_message,
+                                )
+                            return
+                        event = await pending_task
 
                     if event is _STREAM_END:
                         return
 
                     domain_event = cast(ChatStreamEvent, event)
-                    if domain_event.type == ChatStreamEventType.TOKEN:
-                        awaiting_first_token = False
+                    if (
+                        domain_event.type == ChatStreamEventType.TOKEN
+                        and isinstance(domain_event.payload, ChatStreamToken)
+                        and domain_event.payload.delta
+                    ):
+                        first_token_received = True
+                        last_token_time = loop.time()
+
                     yield mapper.to_sse_event(domain_event)
+
+                    if domain_event.type == ChatStreamEventType.COMPLETE:
+                        terminal_emitted = True
+                        return
             except asyncio.CancelledError:
+                stream.request_cancel(ChatStreamCancelReason.CLIENT_DISCONNECT)
                 raise
             except ResourceNotFoundException:
-                yield mapper.to_sse_error(
-                    code="conversation_not_found",
-                    message="Conversation not found",
-                )
+                if not terminal_emitted:
+                    terminal_emitted = True
+                    yield mapper.to_sse_error(
+                        code="conversation_not_found",
+                        message="Conversation not found",
+                    )
             except DatabaseException:
-                yield mapper.to_sse_error(
-                    code="persistence_failed",
-                    message="Failed to save assistant response",
-                )
+                if not terminal_emitted:
+                    terminal_emitted = True
+                    yield mapper.to_sse_error(
+                        code="PERSISTENCE_ERROR",
+                        message="Failed to save assistant response",
+                    )
             except AIServiceException:
-                yield mapper.to_sse_error(
-                    code="generation_failed",
-                    message="Assistant generation failed",
-                )
+                if not terminal_emitted:
+                    terminal_emitted = True
+                    if (
+                        stream.snapshot.cancel_reason
+                        == ChatStreamCancelReason.OUTPUT_LIMIT
+                    ):
+                        yield mapper.to_sse_error(
+                            code="OUTPUT_LIMIT",
+                            message="Assistant response exceeded the output limit",
+                        )
+                    else:
+                        yield mapper.to_sse_error(
+                            code="PROVIDER_ERROR",
+                            message="Assistant generation failed",
+                        )
+            except Exception:  # noqa: BLE001
+                if not terminal_emitted:
+                    terminal_emitted = True
+                    yield mapper.to_sse_error(
+                        code="INTERNAL_ERROR",
+                        message="Internal streaming error",
+                    )
             finally:
                 await run_in_threadpool(stream.close)
+                if pending_task is not None and not pending_task.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(pending_task), timeout=1.0
+                        )
+                    except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                        pass
+                if (
+                    pending_task is not None
+                    and pending_task.done()
+                    and not pending_task.cancelled()
+                ):
+                    pending_task.exception()
 
         return EventSourceResponse(
             events(),

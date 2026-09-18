@@ -43,15 +43,27 @@ class MessageRepository(BaseRepository[Message]):
         *,
         conversation_id: UUID,
         limit: int,
+        exclude_message_id: UUID | None = None,
     ) -> Sequence[Message]:
-        """Return the most recent messages in chronological order."""
+        """
+        Return the most recent messages in chronological order.
+
+        Optionally exclude a message that has already been persisted but should
+        not participate in the current prompt history.
+        """
+
+        filters = [Message.conversation_id == conversation_id]
+
+        if exclude_message_id is not None:
+            filters.append(Message.id != exclude_message_id)
 
         statement = (
             select(Message)
-            .where(Message.conversation_id == conversation_id)
+            .where(*filters)
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(limit)
         )
+
         messages = list(self.db.scalars(statement))
         messages.reverse()
         return messages

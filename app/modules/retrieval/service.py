@@ -28,6 +28,7 @@ class RetrievalService:
         self.embedding_generator = embedding_generator
         self.chunk_repository = chunk_repository
         self._knowledge_base_repository = knowledge_base_repository
+        self._db = self._knowledge_base_repository.db
 
     def retrieve(
         self,
@@ -74,6 +75,9 @@ class RetrievalService:
             is None
         ):
             raise ResourceNotFoundException("Knowledge base not found")
+
+        # End the short DB read transaction before external embedding I/O.
+        self._db.rollback()
 
         start_time = perf_counter()
         logger.info(
