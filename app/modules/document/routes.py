@@ -4,9 +4,25 @@ from fastapi import APIRouter, File, UploadFile, status
 
 from app.dependencies.auth import CurrentUser
 from app.dependencies.controllers import DocumentControllerDep
-from app.modules.document.schemas import DocumentResponse
+from app.modules.document.schemas import DocumentListResponse, DocumentResponse
 
 router = APIRouter(prefix="/knowledge-bases", tags=["Documents"])
+
+
+@router.get(
+    "/{knowledge_base_id}/documents",
+    response_model=DocumentListResponse,
+)
+def list_documents(
+    *,
+    knowledge_base_id: UUID,
+    controller: DocumentControllerDep,
+    current_user: CurrentUser,
+) -> DocumentListResponse:
+    return controller.list_documents(
+        user_id=current_user.id,
+        knowledge_base_id=knowledge_base_id,
+    )
 
 
 @router.post(

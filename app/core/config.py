@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     google_api_key: str = Field(default="")
 
-    gemini_chat_model: str = Field(default="gemini-2.5-flash")
+    gemini_chat_model: str = Field(default="gemini-3.1-flash-lite")
 
     gemini_embedding_model: str = Field(default="gemini-embedding-001")
 
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
 
     default_top_k: int = Field(default=5)
 
-    similarity_threshold: float = Field(default=0.7)
+    similarity_threshold: float = Field(default=0.5)
 
     # logging
 

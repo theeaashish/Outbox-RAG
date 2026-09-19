@@ -21,3 +21,9 @@ class DocumentResponse(BaseModel):
     processed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentListResponse(BaseModel):
+    """Documents belonging to a knowledge base."""
+
+    results: list[DocumentResponse]

@@ -5,6 +5,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.document.incoming_file import IncomingFile
 from app.db.models import Document
+from app.modules.document.schemas import DocumentListResponse, DocumentResponse
 from app.modules.document.service import DocumentService
 
 
@@ -31,4 +32,22 @@ class DocumentController:
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             file=incoming,
+        )
+
+    def list_documents(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+    ) -> DocumentListResponse:
+        """List documents owned by the current user in a knowledge base."""
+
+        documents = self._service.list_documents(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        return DocumentListResponse(
+            results=[
+                DocumentResponse.model_validate(document) for document in documents
+            ]
         )

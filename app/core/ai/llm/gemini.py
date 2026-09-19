@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Iterator
 from typing import Any, ClassVar, cast
@@ -59,24 +60,70 @@ class _GeminiLLMStream:
             close()
 
     def _events(self) -> Iterator[LLMStreamEvent]:
-        last_chunk: Any | None = None
+        combined_chunk: Any | None = None
+        captured_finish_reason: str | None = None
+        captured_usage: dict[str, Any] | None = None
+
         try:
             for chunk in self._source:
                 if self._closed:
                     return
-                last_chunk = chunk
+
+                if combined_chunk is None:
+                    combined_chunk = chunk
+                else:
+                    with contextlib.suppress(TypeError, ValueError, AttributeError):
+                        combined_chunk = combined_chunk + chunk
+
+                chunk_metadata = getattr(chunk, "response_metadata", None)
+                if isinstance(chunk_metadata, dict):
+                    raw_reason = chunk_metadata.get("finish_reason")
+                    if raw_reason is not None:
+                        captured_finish_reason = str(raw_reason)
+
+                chunk_usage = getattr(chunk, "usage_metadata", None)
+                if isinstance(chunk_usage, dict):
+                    if captured_usage is None:
+                        captured_usage = dict(chunk_usage)
+                    else:
+                        captured_input = (
+                            chunk_usage.get("input_tokens")
+                            or captured_usage.get("input_tokens")
+                            or 0
+                        )
+                        captured_output = (
+                            captured_usage.get("output_tokens") or 0
+                        ) + (chunk_usage.get("output_tokens") or 0)
+                        captured_usage = {
+                            "input_tokens": captured_input,
+                            "output_tokens": captured_output,
+                            "total_tokens": captured_input + captured_output,
+                        }
+
                 content = GeminiLLMProvider._extract_text(cast(Any, chunk.content))
                 if content:
                     yield LLMStreamDelta(content=content)
 
-            metadata = getattr(last_chunk, "response_metadata", None)
-            usage_metadata = getattr(last_chunk, "usage_metadata", None)
+            final_finish_reason: str = "stop"
+            combined_metadata = getattr(combined_chunk, "response_metadata", None)
+            if (
+                isinstance(combined_metadata, dict)
+                and combined_metadata.get("finish_reason") is not None
+            ):
+                final_finish_reason = str(combined_metadata["finish_reason"])
+            elif captured_finish_reason is not None:
+                final_finish_reason = captured_finish_reason
+
+            final_usage = getattr(combined_chunk, "usage_metadata", None)
+            if not isinstance(final_usage, dict):
+                final_usage = captured_usage
+
             yield LLMStreamCompletion(
                 model=self._model_name,
                 finish_reason=GeminiLLMProvider._normalize_finish_reason(
-                    GeminiLLMProvider._extract_finish_reason(metadata)
+                    final_finish_reason
                 ),
-                usage=GeminiLLMProvider._to_usage(usage_metadata),
+                usage=GeminiLLMProvider._to_usage(final_usage),
             )
         except AIServiceException:
             raise

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -96,6 +96,7 @@ class DocumentService:
         """Create and persist a document."""
 
         document = Document(
+            id=uuid4(),
             title=Path(file.filename).stem,
             filename=file.filename,
             mime_type=file.content_type or "application/octet-stream",
@@ -106,7 +107,9 @@ class DocumentService:
             knowledge_base_id=knowledge_base.id,
         )
 
-        return self._document_repository.create(document)
+        created_document = self._document_repository.create(document)
+        self._document_repository.flush()
+        return created_document
 
     def _create_outbox_event(
         self,
@@ -114,6 +117,9 @@ class DocumentService:
         document: Document,
     ) -> OutboxEvent:
         """Create a durable event for asynchronous document processing."""
+
+        if document.id is None:
+            raise ValueError("Cannot create outbox event for document without an ID")
 
         event = OutboxEvent(
             event_type=OutboxEventType.DOCUMENT_PROCESS,
@@ -243,3 +249,20 @@ class DocumentService:
         )
 
         return document
+
+    def list_documents(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+    ) -> list[Document]:
+        """List documents in a knowledge base after enforcing ownership."""
+
+        knowledge_base = self._get_knowledge_base(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        return self._document_repository.list_by_user_and_knowledge_base(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base.id,
+        )

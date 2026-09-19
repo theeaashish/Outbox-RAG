@@ -146,3 +146,30 @@ def test_gemini_provider_stream_initializes_client_stream():
     events = list(stream)
     assert isinstance(events[0], LLMStreamDelta)
     assert isinstance(events[1], LLMStreamCompletion)
+
+
+def test_gemini_stream_handles_trailing_empty_chunk_with_empty_metadata():
+    chunks = [
+        SimpleNamespace(
+            content="Hello",
+            response_metadata={"finish_reason": "STOP"},
+            usage_metadata={"input_tokens": 5, "output_tokens": 3, "total_tokens": 8},
+        ),
+        SimpleNamespace(
+            content="",
+            response_metadata={},
+            usage_metadata=None,
+        ),
+    ]
+    stream = _GeminiLLMStream(
+        source=iter(chunks),
+        model_name="gemini-test",
+        message_count=1,
+    )
+    events = list(stream)
+    assert len(events) == 2
+    assert events[0] == LLMStreamDelta(content="Hello")
+    assert isinstance(events[1], LLMStreamCompletion)
+    assert events[1].finish_reason == "stop"
+    assert events[1].usage is not None
+    assert events[1].usage.total_tokens == 8
