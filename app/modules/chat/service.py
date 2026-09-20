@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from threading import Lock
 from time import perf_counter
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -68,6 +68,7 @@ class PreparedChatTurn:
     context: AssembledContext | None
     prompt: list[ChatMessage]
     routing: QueryRoutingDecision
+    assistant_message_id: UUID
 
 
 from enum import StrEnum
@@ -327,6 +328,7 @@ class ChatService:
             context=context,
             prompt=prompt,
             routing=routing,
+            assistant_message_id=uuid4(),
         )
 
     def _persist_user_message(
@@ -375,6 +377,7 @@ class ChatService:
         user_id: UUID,
         conversation_id: UUID,
         assistant_content: str,
+        message_id: UUID | None = None,
     ) -> Message:
         try:
             with managed_session() as db:
@@ -391,6 +394,7 @@ class ChatService:
                     raise ResourceNotFoundException("Conversation not found")
 
                 assistant_message = Message(
+                    id=message_id or uuid4(),
                     role=MessageRole.ASSISTANT,
                     content=assistant_content,
                     conversation_id=conversation_id,
@@ -447,6 +451,7 @@ class ChatService:
             user_id=prepared.user_id,
             conversation_id=prepared.conversation_id,
             assistant_content=assistant_content,
+            message_id=prepared.assistant_message_id,
         )
         return ChatTurnResult(
             assistant_message=assistant_message,
@@ -597,6 +602,7 @@ class ChatService:
                         user_id=prepared.user_id,
                         conversation_id=prepared.conversation_id,
                         assistant_content=assistant_content,
+                        message_id=prepared.assistant_message_id,
                     )
                 except Exception:
                     lifecycle.mark_failed()
