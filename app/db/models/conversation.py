@@ -75,6 +75,10 @@ class Conversation(UUIDMixin, TimestampMixin, Base):
             "user_id",
         ),
         Index(
+            "ix_conversations_project_id",
+            "project_id",
+        ),
+        Index(
             "ix_conversations_knowledge_base_created_at_id_desc",
             "knowledge_base_id",
             text("created_at DESC"),

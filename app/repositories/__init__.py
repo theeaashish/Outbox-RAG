@@ -4,6 +4,8 @@ from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
+from app.repositories.message_feedback import MessageFeedbackRepository
+from app.repositories.message_source import MessageSourceRepository
 from app.repositories.outbox_event import OutboxEventRepository
 from app.repositories.password_credential import PasswordCredentialRepository
 from app.repositories.project import ProjectRepository
@@ -15,7 +17,9 @@ __all__ = [
     "DocumentChunkRepository",
     "DocumentRepository",
     "KnowledgeBaseRepository",
+    "MessageFeedbackRepository",
     "MessageRepository",
+    "MessageSourceRepository",
     "OutboxEventRepository",
     "PasswordCredentialRepository",
     "ProjectRepository",

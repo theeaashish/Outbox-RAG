@@ -6,7 +6,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.core.ai.llm.models import LLMUsage
 from app.core.config import settings
-from app.modules.conversations.schemas import MessageResponse
+from app.modules.conversations.schemas import (
+    MessageResponse,
+    MessageSourceResponse,
+)
 
 
 class ChatRequest(BaseModel):
@@ -43,7 +46,7 @@ class ChatResponse(BaseModel):
     """Response for a completed synchronous chat turn."""
 
     assistant_message: MessageResponse
-    sources: list[ChatSourceResponse]
+    sources: list[MessageSourceResponse]
 
 
 class ChatStreamMetadataResponse(BaseModel):

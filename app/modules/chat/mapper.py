@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import assert_never
 
-from app.core.ai.context.models import AssembledContext, ContextChunk
+from app.core.ai.context.models import ContextChunk
 from app.db.models import Message
 from app.modules.chat.schemas import (
     ChatResponse,
@@ -39,18 +39,13 @@ def to_chat_source_response(context_chunk: ContextChunk) -> ChatSourceResponse:
 def to_chat_response(
     *,
     assistant_message: Message,
-    context: AssembledContext | None,
 ) -> ChatResponse:
-    """Map a completed chat turn to its API response."""
+    """Map a completed chat turn to its API response from canonical persisted sources."""
 
-    sources = (
-        [to_chat_source_response(context_chunk) for context_chunk in context.chunks]
-        if context is not None
-        else []
-    )
+    msg_response = to_message_response(assistant_message)
     return ChatResponse(
-        assistant_message=to_message_response(assistant_message),
-        sources=sources,
+        assistant_message=msg_response,
+        sources=msg_response.sources,
     )
 
 

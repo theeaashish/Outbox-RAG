@@ -9,7 +9,14 @@ from sqlalchemy.orm import sessionmaker
 from app.core.exceptions import ValidationException
 from app.core.pagination import CursorCodec, CursorResource, InvalidCursorError
 from app.db.base import Base
-from app.db.models import Conversation, KnowledgeBase, Message, Project, User
+from app.db.models import (
+    Conversation,
+    KnowledgeBase,
+    Message,
+    MessageSource,
+    Project,
+    User,
+)
 from app.db.models.enums import MessageRole
 from app.dependencies.auth import get_current_user
 from app.modules.conversations.service import ConversationService
@@ -28,6 +35,7 @@ def _sqlite_session():
             cast(Table, KnowledgeBase.__table__),
             cast(Table, Conversation.__table__),
             cast(Table, Message.__table__),
+            cast(Table, MessageSource.__table__),
         ],
     )
     session = sessionmaker(bind=engine)()

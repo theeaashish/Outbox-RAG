@@ -3,9 +3,53 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.db.models.enums import MessageRole
+from app.db.models.enums import FeedbackRating, MessageRole
+
+
+class MessageSourceResponse(BaseModel):
+    """Durable context source backing an assistant message."""
+
+    id: UUID
+    citation: int = Field(
+        ...,
+        description="1-based context citation number matching [n]",
+    )
+    is_cited: bool = Field(..., description="True if cited in the assistant response")
+    source_order: int = Field(
+        ..., description="0-based sequence position in assembled context"
+    )
+    document_id: UUID | None = Field(
+        None, description="Authoritative document ID if document exists"
+    )
+    document_chunk_id: UUID | None = Field(
+        None, description="Authoritative chunk ID if chunk exists"
+    )
+    document_name: str = Field(
+        ..., description="Document title snapshot at citation time"
+    )
+    chunk_index: int = Field(..., description="0-based chunk sequence index")
+    score: float = Field(..., description="Cosine similarity score (0.0 to 1.0)")
+    page_start: int | None = Field(None, description="Starting page if available")
+    page_end: int | None = Field(None, description="Ending page if available")
+
+
+class FeedbackRequest(BaseModel):
+    """Request payload to set message feedback."""
+
+    rating: FeedbackRating
+
+
+class MessageFeedbackResponse(BaseModel):
+    """Response schema for feedback operations."""
+
+    id: UUID
+    message_id: UUID
+    user_id: UUID = Field(..., description="User ID of the feedback author")
+    rating: FeedbackRating
+    created_at: datetime
+    updated_at: datetime
 
 
 class ConversationResponse(BaseModel):
@@ -31,6 +75,8 @@ class MessageResponse(BaseModel):
     content: str
     created_at: datetime
     updated_at: datetime
+    sources: list[MessageSourceResponse] = Field(default_factory=list)
+    feedback: FeedbackRating | None = Field(default=None)
 
 
 class MessageListResponse(BaseModel):

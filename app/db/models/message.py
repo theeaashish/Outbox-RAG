@@ -11,6 +11,8 @@ from app.db.models.enums import MessageRole
 
 if TYPE_CHECKING:
     from app.db.models.conversation import Conversation
+    from app.db.models.message_feedback import MessageFeedback
+    from app.db.models.message_source import MessageSource
 
 
 class Message(UUIDMixin, TimestampMixin, Base):
@@ -41,6 +43,21 @@ class Message(UUIDMixin, TimestampMixin, Base):
     conversation: Mapped[Conversation] = relationship(
         back_populates="messages",
         lazy="select",
+    )
+
+    sources: Mapped[list[MessageSource]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+        order_by="MessageSource.source_order.asc()",
+    )
+
+    feedbacks: Mapped[list[MessageFeedback]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
     )
 
     __table_args__ = (

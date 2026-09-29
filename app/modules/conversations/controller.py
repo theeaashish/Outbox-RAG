@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.db.models.enums import FeedbackRating, MessageRole
 from app.modules.conversations import mapper
 from app.modules.conversations.schemas import (
     ConversationCursorPageResponse,
     ConversationListResponse,
     ConversationResponse,
     MessageCursorPageResponse,
+    MessageFeedbackResponse,
     MessageListResponse,
 )
 from app.modules.conversations.service import ConversationService
@@ -100,8 +102,17 @@ class ConversationController:
             limit=limit,
             offset=offset,
         )
+        assistant_ids = [m.id for m in messages if m.role == MessageRole.ASSISTANT]
+        feedback_map = (
+            self._conversation_service.get_user_feedback_map(
+                user_id=user_id,
+                message_ids=assistant_ids,
+            )
+            if assistant_ids
+            else {}
+        )
 
-        return mapper.to_message_list_response(messages)
+        return mapper.to_message_list_response(messages, feedback_map=feedback_map)
 
     def list_conversations_cursor(
         self,
@@ -135,7 +146,7 @@ class ConversationController:
         after: str | None = None,
         before: str | None = None,
     ) -> MessageCursorPageResponse:
-        page = self._conversation_service.list_messages_cursor(
+        page, feedback_map = self._conversation_service.list_messages_cursor(
             user_id=user_id,
             conversation_id=conversation_id,
             page_size=page_size,
@@ -147,6 +158,34 @@ class ConversationController:
             page_size=page_size,
             conversation_id=conversation_id,
             cursor_codec=self._conversation_service.cursor_codec,
+            feedback_map=feedback_map,
+        )
+
+    def set_feedback(
+        self,
+        *,
+        user_id: UUID,
+        message_id: UUID,
+        rating: FeedbackRating,
+    ) -> MessageFeedbackResponse:
+        """Upsert user feedback for an assistant message."""
+        feedback = self._conversation_service.upsert_feedback(
+            user_id=user_id,
+            message_id=message_id,
+            rating=rating,
+        )
+        return mapper.to_message_feedback_response(feedback)
+
+    def delete_feedback(
+        self,
+        *,
+        user_id: UUID,
+        message_id: UUID,
+    ) -> None:
+        """Delete user feedback for an assistant message."""
+        self._conversation_service.delete_feedback(
+            user_id=user_id,
+            message_id=message_id,
         )
 
     def delete_conversation(

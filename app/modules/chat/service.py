@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from dataclasses import dataclass
 from threading import Lock
 from time import perf_counter
 from uuid import UUID, uuid4
 
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.ai.context.assembler import ContextAssembler
@@ -26,12 +26,15 @@ from app.core.ai.prompting.base import PromptBuilder
 from app.core.ai.prompting.conversational import ConversationalPromptBuilder
 from app.core.ai.routing.models import ConversationMode, QueryRoutingDecision
 from app.core.ai.routing.router import QueryRouter
+from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
+    CitationValidationException,
     DatabaseException,
     ResourceNotFoundException,
 )
-from app.db.models import Conversation, Message
+from app.db.classification import is_unique_constraint_violation
+from app.db.models import Conversation, Message, MessageSource
 from app.db.models.enums import MessageRole
 from app.db.session import managed_session
 from app.modules.chat.streaming import (
@@ -43,6 +46,7 @@ from app.modules.chat.streaming import (
 from app.modules.retrieval.service import RetrievalService
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
+from app.repositories.message_source import MessageSourceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +194,7 @@ class ChatService:
         similarity_threshold: float | None,
         stream_max_buffered_characters: int,
         citation_validator: CitationValidator | None = None,
+        citation_validation_strict: bool | None = None,
     ) -> None:
         self._db = db
         self._conversation_repository = conversation_repository
@@ -205,6 +210,11 @@ class ChatService:
         self._similarity_threshold = similarity_threshold
         self._stream_max_buffered_characters = stream_max_buffered_characters
         self._citation_validator = citation_validator or CitationValidator()
+        self._citation_validation_strict = (
+            citation_validation_strict
+            if citation_validation_strict is not None
+            else settings.citation_validation_strict
+        )
 
     def _get_conversation(
         self,
@@ -225,14 +235,12 @@ class ChatService:
         self,
         *,
         conversation_id: UUID,
-        exclude_message_id: UUID,
+        exclude_message_id: UUID | None = None,
     ) -> list[ChatMessage]:
-        messages: Sequence[Message] = (
-            self._message_repository.list_recent_by_conversation(
-                conversation_id=conversation_id,
-                limit=self._history_message_limit,
-                exclude_message_id=exclude_message_id,
-            )
+        messages = self._message_repository.list_recent_by_conversation(
+            conversation_id=conversation_id,
+            limit=self._history_message_limit,
+            exclude_message_id=exclude_message_id,
         )
         return [
             to_chat_message(message)
@@ -371,18 +379,21 @@ class ChatService:
             )
             raise DatabaseException("Failed to persist user message") from exc
 
-    def _persist_assistant_message(
+    def _finalize_assistant_turn(
         self,
         *,
         user_id: UUID,
         conversation_id: UUID,
         assistant_content: str,
-        message_id: UUID | None = None,
+        message_id: UUID,
+        context: AssembledContext | None,
+        cited_citations: set[int],
     ) -> Message:
         try:
             with managed_session() as db:
                 conversation_repository = ConversationRepository(db=db)
                 message_repository = MessageRepository(db=db)
+                message_source_repository = MessageSourceRepository(db=db)
 
                 if (
                     conversation_repository.get_by_user_and_id(
@@ -394,23 +405,82 @@ class ChatService:
                     raise ResourceNotFoundException("Conversation not found")
 
                 assistant_message = Message(
-                    id=message_id or uuid4(),
+                    id=message_id,
                     role=MessageRole.ASSISTANT,
                     content=assistant_content,
                     conversation_id=conversation_id,
                 )
-                message_repository.create(assistant_message)
+                try:
+                    message_repository.create(assistant_message)
+                    message_repository.flush()
+                except IntegrityError as exc:
+                    db.rollback()
+                    if is_unique_constraint_violation(exc, "pk_messages"):
+                        existing = message_repository.get_by_id_with_sources(message_id)
+                        if (
+                            existing is not None
+                            and existing.conversation_id == conversation_id
+                            and existing.role == MessageRole.ASSISTANT
+                            and existing.content == assistant_content
+                        ):
+                            logger.info(
+                                "Assistant message finalization already completed by concurrent execution",
+                                extra={
+                                    "message_id": str(message_id),
+                                    "source_count": len(existing.sources),
+                                },
+                            )
+                            return existing
+                        raise DatabaseException(
+                            "Duplicate message ID conflict with invalid state or different conversation"
+                        )
+                    raise
+
+                if context is not None and context.chunks:
+                    seen_citations: set[int] = set()
+                    sources_to_create: list[MessageSource] = []
+                    next_source_order = 0
+                    for chunk in context.chunks:
+                        if chunk.citation in seen_citations:
+                            continue
+                        seen_citations.add(chunk.citation)
+
+                        sources_to_create.append(
+                            MessageSource(
+                                id=uuid4(),
+                                message_id=assistant_message.id,
+                                citation_number=chunk.citation,
+                                is_cited=chunk.citation in cited_citations,
+                                source_order=next_source_order,
+                                document_id=chunk.document_id,
+                                document_chunk_id=chunk.chunk_id,
+                                document_name_snapshot=chunk.document_name,
+                                chunk_index_snapshot=chunk.chunk_index,
+                                retrieval_score=chunk.similarity,
+                                page_start_snapshot=chunk.page_start,
+                                page_end_snapshot=chunk.page_end,
+                            )
+                        )
+                        next_source_order += 1
+
+                    if sources_to_create:
+                        message_source_repository.bulk_create(sources_to_create)
+
                 db.commit()
-                message_repository.refresh(assistant_message)
-                return assistant_message
-        except ResourceNotFoundException:
+                reloaded = message_repository.get_by_id_with_sources(message_id)
+                if reloaded is None:
+                    raise DatabaseException(
+                        "Failed to reload canonical assistant message after commit"
+                    )
+                return reloaded
+        except (ResourceNotFoundException, DatabaseException):
             raise
         except SQLAlchemyError as exc:
             logger.exception(
-                "Assistant message persistence failed",
+                "Assistant turn finalization failed",
                 extra={"conversation_id": str(conversation_id)},
             )
-            raise DatabaseException("Failed to persist assistant message") from exc
+            raise DatabaseException("Failed to finalize assistant turn") from exc
 
     def send_message(
         self,
@@ -439,19 +509,29 @@ class ChatService:
             )
             if not validation.is_valid:
                 logger.warning(
-                    "LLM generated invalid citation IDs",
+                    "Citation validation failed: LLM generated invalid citation IDs or malformed markers",
                     extra={
                         "conversation_id": str(prepared.conversation_id),
                         "invalid_citations": validation.invalid_citations,
                         "valid_citations": list(valid_citations),
                     },
                 )
+                if self._citation_validation_strict:
+                    raise CitationValidationException(
+                        "Assistant response failed citation validation",
+                        invalid_citations=validation.invalid_citations,
+                    )
+            cited_citations = set(validation.cited_citations)
+        else:
+            cited_citations = set()
 
-        assistant_message = self._persist_assistant_message(
+        assistant_message = self._finalize_assistant_turn(
             user_id=prepared.user_id,
             conversation_id=prepared.conversation_id,
             assistant_content=assistant_content,
             message_id=prepared.assistant_message_id,
+            context=prepared.context,
+            cited_citations=cited_citations,
         )
         return ChatTurnResult(
             assistant_message=assistant_message,
@@ -587,22 +667,33 @@ class ChatService:
                     )
                     if not validation.is_valid:
                         logger.warning(
-                            "LLM generated invalid citation IDs",
+                            "Citation validation failed: LLM generated invalid citation IDs or malformed markers",
                             extra={
                                 "conversation_id": str(prepared.conversation_id),
                                 "invalid_citations": validation.invalid_citations,
                                 "valid_citations": list(valid_citations),
                             },
                         )
+                        if self._citation_validation_strict:
+                            lifecycle.mark_failed()
+                            raise CitationValidationException(
+                                "Assistant response failed citation validation",
+                                invalid_citations=validation.invalid_citations,
+                            )
+                    cited_citations = set(validation.cited_citations)
+                else:
+                    cited_citations = set()
 
                 lifecycle.begin_finalization()
                 persistence_started_at = perf_counter()
                 try:
-                    assistant_message = self._persist_assistant_message(
+                    assistant_message = self._finalize_assistant_turn(
                         user_id=prepared.user_id,
                         conversation_id=prepared.conversation_id,
                         assistant_content=assistant_content,
                         message_id=prepared.assistant_message_id,
+                        context=prepared.context,
+                        cited_citations=cited_citations,
                     )
                 except Exception:
                     lifecycle.mark_failed()

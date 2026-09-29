@@ -89,4 +89,8 @@ class KnowledgeBase(UUIDMixin, TimestampMixin, Base):
             "ix_knowledge_bases_user_id",
             "user_id",
         ),
+        Index(
+            "ix_knowledge_bases_project_id",
+            "project_id",
+        ),
     )

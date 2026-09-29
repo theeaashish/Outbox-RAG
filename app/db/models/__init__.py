@@ -5,12 +5,15 @@ from app.db.models.document_chunk import DocumentChunk
 from app.db.models.enums import (
     AuthProvider,
     DocumentStatus,
+    FeedbackRating,
     MessageRole,
     OutboxEventType,
     UserStatus,
 )
 from app.db.models.knowledge_base import KnowledgeBase
 from app.db.models.message import Message
+from app.db.models.message_feedback import MessageFeedback
+from app.db.models.message_source import MessageSource
 from app.db.models.outbox_event import OutboxEvent
 from app.db.models.password_credential import PasswordCredential
 from app.db.models.project import Project
@@ -24,9 +27,12 @@ __all__ = [
     "Document",
     "DocumentChunk",
     "DocumentStatus",
+    "FeedbackRating",
     "KnowledgeBase",
     "Message",
+    "MessageFeedback",
     "MessageRole",
+    "MessageSource",
     "OutboxEvent",
     "OutboxEventType",
     "PasswordCredential",

@@ -91,9 +91,9 @@ class _GeminiLLMStream:
                             or captured_usage.get("input_tokens")
                             or 0
                         )
-                        captured_output = (
-                            captured_usage.get("output_tokens") or 0
-                        ) + (chunk_usage.get("output_tokens") or 0)
+                        captured_output = (captured_usage.get("output_tokens") or 0) + (
+                            chunk_usage.get("output_tokens") or 0
+                        )
                         captured_usage = {
                             "input_tokens": captured_input,
                             "output_tokens": captured_output,

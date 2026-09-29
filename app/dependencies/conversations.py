@@ -9,6 +9,7 @@ from app.dependencies.core import get_cursor_codec
 from app.dependencies.repositories import (
     DBSession,
     get_conversation_repository,
+    get_message_feedback_repository,
     get_message_repository,
     get_project_repository,
 )
@@ -17,6 +18,7 @@ from app.modules.conversations.controller import ConversationController
 from app.modules.conversations.service import ConversationService
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
+from app.repositories.message_feedback import MessageFeedbackRepository
 from app.repositories.project import ProjectRepository
 
 ConversationRepositoryDep = Annotated[
@@ -27,6 +29,11 @@ ConversationRepositoryDep = Annotated[
 MessageRepositoryDep = Annotated[
     MessageRepository,
     Depends(get_message_repository),
+]
+
+MessageFeedbackRepositoryDep = Annotated[
+    MessageFeedbackRepository,
+    Depends(get_message_feedback_repository),
 ]
 
 ProjectRepositoryDep = Annotated[
@@ -44,6 +51,7 @@ def get_conversation_service(
     project_repository: ProjectRepositoryDep,
     message_repository: MessageRepositoryDep,
     cursor_codec: CursorCodecDep,
+    message_feedback_repository: MessageFeedbackRepositoryDep,
 ) -> ConversationService:
     """Return a configured ConversationService."""
 
@@ -54,6 +62,7 @@ def get_conversation_service(
         project_repository=project_repository,
         message_repository=message_repository,
         cursor_codec=cursor_codec,
+        message_feedback_repository=message_feedback_repository,
     )
 
 

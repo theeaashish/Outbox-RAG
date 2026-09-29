@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from app.dependencies.auth import CurrentUser
 from app.dependencies.conversations import ConversationControllerDep
 from app.modules.chat.v2_routes import router as chat_v2_router
+from app.modules.conversations.feedback_routes import router as feedback_v2_router
 from app.modules.conversations.schemas import (
     ConversationCursorPageResponse,
     MessageCursorPageResponse,
@@ -14,6 +15,7 @@ from app.modules.conversations.schemas import (
 
 api_v2_router = APIRouter()
 api_v2_router.include_router(chat_v2_router)
+api_v2_router.include_router(feedback_v2_router)
 
 
 @api_v2_router.get(

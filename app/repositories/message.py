@@ -5,10 +5,10 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.pagination import CursorPage, CursorPosition
-from app.db.models import Message
+from app.db.models import Conversation, Message
 from app.repositories.base import BaseRepository
 
 
@@ -21,6 +21,22 @@ class MessageRepository(BaseRepository[Message]):
             model=Message,
         )
 
+    def get_by_user_and_id(
+        self,
+        user_id: UUID,
+        message_id: UUID,
+    ) -> Message | None:
+        """Retrieve a message by ID verifying that its parent conversation belongs to user_id."""
+        statement = (
+            select(Message)
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .where(
+                Message.id == message_id,
+                Conversation.user_id == user_id,
+            )
+        )
+        return self.db.scalar(statement)
+
     def list_by_conversation(
         self,
         *,
@@ -31,12 +47,22 @@ class MessageRepository(BaseRepository[Message]):
         """Retrieve messages for a given conversation, oldest first, up to limit."""
         statement = (
             select(Message)
+            .options(selectinload(Message.sources))
             .where(Message.conversation_id == conversation_id)
             .order_by(Message.created_at.asc(), Message.id.asc())
             .limit(limit)
             .offset(offset)
         )
         return list(self.db.scalars(statement))
+
+    def get_by_id_with_sources(self, id: UUID) -> Message | None:
+        """Fetch a message by ID eagerly loading its durable sources."""
+        statement = (
+            select(Message)
+            .options(selectinload(Message.sources))
+            .where(Message.id == id)
+        )
+        return self.db.scalar(statement)
 
     def list_recent_by_conversation(
         self,
@@ -111,7 +137,11 @@ class MessageRepository(BaseRepository[Message]):
             else (Message.created_at.asc(), Message.id.asc())
         )
         statement = (
-            select(Message).where(*filters).order_by(*ordering).limit(page_size + 1)
+            select(Message)
+            .options(selectinload(Message.sources))
+            .where(*filters)
+            .order_by(*ordering)
+            .limit(page_size + 1)
         )
         items = list(self.db.scalars(statement))
         has_more = len(items) > page_size

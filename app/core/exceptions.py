@@ -28,6 +28,15 @@ class ValidationException(AppException):
         )
 
 
+class MessageNotAssistantException(ValidationException):
+    """Raised when an operation requires an assistant message but another role was provided."""
+
+    def __init__(
+        self, message: str = "Only assistant messages can receive feedback"
+    ) -> None:
+        super().__init__(message=message)
+
+
 class UnsupportedDocumentTypeError(ValidationException):
     """Raised when an unsupported document type is requested"""
 
@@ -82,11 +91,34 @@ class ForbiddenException(AppException):
 class AIServiceException(AppException):
     """Raised when an AI service fails"""
 
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "AI_SERVICE_ERROR",
+    ) -> None:
         super().__init__(
             message=message,
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
+        self.code = code
+
+
+class CitationValidationException(AIServiceException):
+    """Raised when generated assistant text fails citation validation against context."""
+
+    def __init__(
+        self,
+        message: str = "Assistant response failed citation validation",
+        *,
+        invalid_citations: list[int | str] | None = None,
+        code: str = "VALIDATION_ERROR",
+    ) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+        )
+        self.invalid_citations = invalid_citations or []
 
 
 class DatabaseException(AppException):

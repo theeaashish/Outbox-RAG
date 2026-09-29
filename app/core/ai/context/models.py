@@ -14,6 +14,7 @@ class ContextChunk:
     """
 
     citation: int
+    chunk_id: UUID
     document_id: UUID
     document_name: str
     chunk_index: int

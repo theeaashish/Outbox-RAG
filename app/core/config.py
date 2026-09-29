@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     google_api_key: str = Field(default="")
 
-    gemini_chat_model: str = Field(default="gemini-3.1-flash-lite")
+    gemini_chat_model: str = Field(default="gemini-3.5-flash-lite")
 
     gemini_embedding_model: str = Field(default="gemini-embedding-001")
 
@@ -93,6 +93,7 @@ class Settings(BaseSettings):
 
     chat_max_message_characters: int = Field(default=10_000, ge=1)
     chat_context_max_characters: int = Field(default=16_000, ge=500)
+    citation_validation_strict: bool = Field(default=False)
 
     chat_stream_first_token_timeout_seconds: int = Field(default=20, ge=1)
 

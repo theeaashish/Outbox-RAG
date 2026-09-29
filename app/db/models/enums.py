@@ -34,3 +34,10 @@ class AuthProvider(StrEnum):
     PASSWORD = "password"
     GOOGLE = "google"
     GITHUB = "github"
+
+
+class FeedbackRating(StrEnum):
+    """User feedback rating for an assistant message"""
+
+    UP = "up"
+    DOWN = "down"

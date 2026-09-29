@@ -13,6 +13,7 @@ from app.repositories.document import DocumentRepository
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
+from app.repositories.message_feedback import MessageFeedbackRepository
 from app.repositories.outbox_event import OutboxEventRepository
 from app.repositories.password_credential import PasswordCredentialRepository
 from app.repositories.project import ProjectRepository
@@ -20,6 +21,13 @@ from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
 
 DBSession = Annotated[Session, Depends(get_db)]
+
+
+def get_message_feedback_repository(
+    db: DBSession,
+) -> MessageFeedbackRepository:
+    """Return a message feedback repository."""
+    return MessageFeedbackRepository(db=db)
 
 
 def get_knowledge_base_repository(

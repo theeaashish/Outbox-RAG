@@ -148,6 +148,7 @@ class ContextAssembler:
 
             chunk = ContextChunk(
                 citation=1,
+                chunk_id=first_item.chunk.id,
                 document_id=first_item.chunk.document_id,
                 document_name=first_doc_name,
                 chunk_index=first_item.chunk.chunk_index,
@@ -161,6 +162,7 @@ class ContextAssembler:
         included_chunks: list[ContextChunk] = [
             ContextChunk(
                 citation=1,
+                chunk_id=first_item.chunk.id,
                 document_id=first_item.chunk.document_id,
                 document_name=first_doc_name,
                 chunk_index=first_item.chunk.chunk_index,
@@ -196,6 +198,7 @@ class ContextAssembler:
                 included_chunks.append(
                     ContextChunk(
                         citation=next_citation,
+                        chunk_id=item.chunk.id,
                         document_id=item.chunk.document_id,
                         document_name=doc_name,
                         chunk_index=item.chunk.chunk_index,

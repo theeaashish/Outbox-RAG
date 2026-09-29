@@ -15,6 +15,7 @@ def test_prompt_builder_structure_and_roles():
         chunks=[
             ContextChunk(
                 citation=1,
+                chunk_id=uuid4(),
                 document_id=uuid4(),
                 document_name="Auth",
                 chunk_index=0,

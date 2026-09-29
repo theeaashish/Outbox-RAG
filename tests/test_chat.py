@@ -1,7 +1,8 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import cast
-from unittest.mock import MagicMock
-from uuid import uuid4
+from unittest.mock import MagicMock, patch
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,11 +22,12 @@ from app.core.ai.routing import ConversationMode, QueryRouter, RoutingReason
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
+    CitationValidationException,
     DatabaseException,
     ResourceNotFoundException,
 )
 from app.db.base import Base
-from app.db.models import Conversation, KnowledgeBase, Message, User
+from app.db.models import Conversation, KnowledgeBase, Message, MessageSource, User
 from app.db.models.enums import MessageRole
 from app.dependencies.auth import get_current_user
 from app.dependencies.chat import get_chat_controller
@@ -43,6 +45,12 @@ from app.modules.chat.service import (
 )
 from app.modules.conversations.schemas import MessageResponse
 from app.repositories.message import MessageRepository
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_patches():
+    yield
+    patch.stopall()
 
 
 class _FakeLLMStream:
@@ -84,6 +92,7 @@ def test_list_recent_by_conversation_returns_chronological_window():
             cast(Table, KnowledgeBase.__table__),
             cast(Table, Conversation.__table__),
             cast(Table, Message.__table__),
+            cast(Table, MessageSource.__table__),
         ],
     )
     session = sessionmaker(bind=engine)()
@@ -149,6 +158,25 @@ def _build_chat_service():
             content="Earlier answer",
         ),
     ]
+    persisted_messages: dict[UUID, Message] = {}
+
+    def _fake_create(instance):
+        if hasattr(instance, "id") and instance.id:
+            persisted_messages[instance.id] = instance
+        return instance
+
+    message_repository.create.side_effect = _fake_create
+
+    def _fake_get_by_id_with_sources(msg_id):
+        msg = persisted_messages.get(msg_id)
+        if msg is not None:
+            if not hasattr(msg, "sources"):
+                msg.sources = []
+            return msg
+        return None
+
+    message_repository.get_by_id_with_sources.side_effect = _fake_get_by_id_with_sources
+    message_repository.get_by_id.side_effect = _fake_get_by_id_with_sources
     retrieval_service = MagicMock()
     retrieval_service.retrieve.return_value = []
     context = AssembledContext(query="Current question", block="", chunks=[])
@@ -181,6 +209,29 @@ def _build_chat_service():
         similarity_threshold=0.7,
         stream_max_buffered_characters=65_536,
     )
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    message_source_repository = MagicMock()
+
+    @contextmanager
+    def _fake_managed_session():
+        yield db
+
+    patch("app.modules.chat.service.managed_session", _fake_managed_session).start()
+    patch(
+        "app.modules.chat.service.ConversationRepository",
+        return_value=conversation_repository,
+    ).start()
+    patch(
+        "app.modules.chat.service.MessageRepository",
+        return_value=message_repository,
+    ).start()
+    patch(
+        "app.modules.chat.service.MessageSourceRepository",
+        return_value=message_source_repository,
+    ).start()
+
     return {
         "service": service,
         "user_id": user_id,
@@ -188,6 +239,7 @@ def _build_chat_service():
         "conversation": conversation,
         "conversation_repository": conversation_repository,
         "message_repository": message_repository,
+        "message_source_repository": message_source_repository,
         "retrieval_service": retrieval_service,
         "context": context,
         "context_assembler": context_assembler,
@@ -212,6 +264,7 @@ def test_chat_service_generates_context_and_persists_a_message_pair():
     ].list_recent_by_conversation.assert_called_once_with(
         conversation_id=dependencies["conversation"].id,
         limit=20,
+        exclude_message_id=None,
     )
     dependencies["retrieval_service"].retrieve.assert_called_once_with(
         user_id=dependencies["user_id"],
@@ -235,9 +288,10 @@ def test_chat_service_generates_context_and_persists_a_message_pair():
         "Current question",
         "Grounded answer",
     ]
-    dependencies["db"].commit.assert_called_once()
-    dependencies["message_repository"].refresh.assert_called_once_with(
-        result.assistant_message
+    dependencies["db"].commit.assert_called()
+    assert dependencies["db"].commit.call_count == 2
+    dependencies["message_repository"].get_by_id_with_sources.assert_called_once_with(
+        result.assistant_message.id
     )
     assert result.context == dependencies["context"]
 
@@ -255,13 +309,14 @@ def test_chat_service_does_not_persist_when_generation_fails():
             content="Current question",
         )
 
-    dependencies["message_repository"].create.assert_not_called()
-    dependencies["db"].commit.assert_not_called()
+    # User message was persisted in prepare_turn, but assistant message was not
+    assert dependencies["message_repository"].create.call_count == 1
+    assert dependencies["db"].commit.call_count == 1
 
 
 def test_chat_service_rolls_back_message_pair_when_commit_fails():
     dependencies = _build_chat_service()
-    dependencies["db"].commit.side_effect = SQLAlchemyError("write failed")
+    dependencies["db"].commit.side_effect = [None, SQLAlchemyError("write failed")]
 
     with pytest.raises(DatabaseException):
         dependencies["service"].send_message(
@@ -271,7 +326,6 @@ def test_chat_service_rolls_back_message_pair_when_commit_fails():
         )
 
     assert dependencies["message_repository"].create.call_count == 2
-    assert dependencies["db"].rollback.call_count == 2
 
 
 def test_chat_service_rejects_missing_conversation_before_external_calls():
@@ -342,7 +396,7 @@ def test_chat_service_stream_orders_events_and_persists_atomically():
         and events[4].payload.assistant_message.content == "Hello"
     )
     assert dependencies["message_repository"].create.call_count == 2
-    dependencies["db"].commit.assert_called_once()
+    assert dependencies["db"].commit.call_count == 2
     assert fake_stream.closed is True
 
 
@@ -372,7 +426,7 @@ def test_chat_service_stream_persists_length_finish_reason():
         isinstance(complete.payload, ChatStreamComplete)
         and complete.payload.finish_reason == "length"
     )
-    dependencies["db"].commit.assert_called_once()
+    assert dependencies["db"].commit.call_count == 2
 
 
 def test_chat_service_stream_does_not_persist_on_empty_completion():
@@ -395,8 +449,9 @@ def test_chat_service_stream_does_not_persist_on_empty_completion():
     with pytest.raises(AIServiceException):
         list(dependencies["service"].stream_prepared_turn(prepared=prepared))
 
-    dependencies["message_repository"].create.assert_not_called()
-    dependencies["db"].commit.assert_not_called()
+    # User message committed in prepare_turn, assistant message not created
+    assert dependencies["message_repository"].create.call_count == 1
+    assert dependencies["db"].commit.call_count == 1
 
 
 def test_chat_service_stream_rejects_invalid_finish_reason():
@@ -420,7 +475,7 @@ def test_chat_service_stream_rejects_invalid_finish_reason():
     with pytest.raises(AIServiceException):
         list(dependencies["service"].stream_prepared_turn(prepared=prepared))
 
-    dependencies["db"].commit.assert_not_called()
+    assert dependencies["db"].commit.call_count == 1
 
 
 def test_chat_service_stream_enforces_output_character_limit():
@@ -445,7 +500,7 @@ def test_chat_service_stream_enforces_output_character_limit():
     with pytest.raises(AIServiceException, match="output limit"):
         list(dependencies["service"].stream_prepared_turn(prepared=prepared))
 
-    dependencies["db"].commit.assert_not_called()
+    assert dependencies["db"].commit.call_count == 1
 
 
 def test_chat_service_stream_close_releases_provider_without_commit():
@@ -475,8 +530,8 @@ def test_chat_service_stream_close_releases_provider_without_commit():
     stream.close()
 
     assert fake_stream.closed is True
-    dependencies["db"].commit.assert_not_called()
-    dependencies["message_repository"].create.assert_not_called()
+    assert dependencies["db"].commit.call_count == 1
+    assert dependencies["message_repository"].create.call_count == 1
 
 
 def test_chat_service_stream_does_not_persist_when_conversation_deleted():
@@ -502,11 +557,13 @@ def test_chat_service_stream_does_not_persist_when_conversation_deleted():
     with pytest.raises(ResourceNotFoundException):
         list(dependencies["service"].stream_prepared_turn(prepared=prepared))
 
-    dependencies["db"].commit.assert_not_called()
+    assert dependencies["db"].commit.call_count == 1
 
 
 def test_chat_response_maps_citation_metadata():
     created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    doc_id = uuid4()
+    chunk_id = uuid4()
     assistant_message = Message(
         id=uuid4(),
         conversation_id=uuid4(),
@@ -515,24 +572,23 @@ def test_chat_response_maps_citation_metadata():
         created_at=created_at,
         updated_at=created_at,
     )
-    context = AssembledContext(
-        query="Question",
-        block="Context",
-        chunks=[
-            ContextChunk(
-                citation=1,
-                document_id=uuid4(),
-                document_name="Handbook",
-                chunk_index=2,
-                similarity=0.91,
-                content="Source text",
-            )
-        ],
-    )
+    assistant_message.sources = [
+        MessageSource(
+            id=uuid4(),
+            message_id=assistant_message.id,
+            citation_number=1,
+            is_cited=True,
+            source_order=0,
+            document_id=doc_id,
+            document_chunk_id=chunk_id,
+            document_name_snapshot="Handbook",
+            chunk_index_snapshot=2,
+            retrieval_score=0.91,
+        )
+    ]
 
     response = mapper.to_chat_response(
         assistant_message=assistant_message,
-        context=context,
     )
 
     assert response.assistant_message.content == "Answer [1]"
@@ -550,6 +606,7 @@ def test_to_sse_event_sequence_contract():
         chunks=[
             ContextChunk(
                 citation=1,
+                chunk_id=uuid4(),
                 document_id=uuid4(),
                 document_name="Handbook",
                 chunk_index=0,
@@ -646,8 +703,9 @@ def chat_client():
     app.dependency_overrides.clear()
 
 
-def test_chat_service_logs_invalid_citations_without_mutating_content():
+def test_chat_service_strict_citation_policy_rejects_invalid_citations():
     dependencies = _build_chat_service()
+    dependencies["service"]._citation_validation_strict = True
     dependencies["llm_provider"].generate.return_value = LLMResponse(
         content="Ground fact [1] and hallucinated [99]",
         model="test-model",
@@ -660,6 +718,7 @@ def test_chat_service_logs_invalid_citations_without_mutating_content():
         chunks=[
             ContextChunk(
                 citation=1,
+                chunk_id=uuid4(),
                 document_id=uuid4(),
                 document_name="Doc",
                 chunk_index=0,
@@ -679,14 +738,81 @@ def test_chat_service_logs_invalid_citations_without_mutating_content():
     prepared = dependencies["service"].prepare_turn.return_value
     object.__setattr__(prepared, "context", context)
 
-    result = dependencies["service"].send_message(
-        user_id=dependencies["user_id"],
-        conversation_id=dependencies["conversation"].id,
-        content="Question",
+    with pytest.raises(CitationValidationException) as exc_info:
+        dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="Question",
+        )
+
+    assert exc_info.value.message == "Assistant response failed citation validation"
+    assert exc_info.value.code == "VALIDATION_ERROR"
+    assert 99 in exc_info.value.invalid_citations
+
+
+def test_chat_service_lenient_citation_policy_allows_invalid_citations(caplog):
+    dependencies = _build_chat_service()
+    assert dependencies["service"]._citation_validation_strict is False
+    dependencies["llm_provider"].generate.return_value = LLMResponse(
+        content="Hallucinated fact [99]",
+        model="test-model",
+        finish_reason="stop",
+        usage=None,
+    )
+    doc_id = uuid4()
+    context = AssembledContext(
+        query="Question",
+        block='[Source 1] Document: "Doc 1"\n---\nFact 1\n[Source 2] Document: "Doc 2"\n---\nFact 2',
+        chunks=[
+            ContextChunk(
+                citation=1,
+                chunk_id=uuid4(),
+                document_id=doc_id,
+                document_name="Doc 1",
+                chunk_index=0,
+                similarity=0.9,
+                content="Fact 1",
+            ),
+            ContextChunk(
+                citation=2,
+                chunk_id=uuid4(),
+                document_id=doc_id,
+                document_name="Doc 2",
+                chunk_index=1,
+                similarity=0.85,
+                content="Fact 2",
+            ),
+        ],
+    )
+    dependencies["service"].prepare_turn = MagicMock(
+        return_value=dependencies["service"].prepare_turn(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="Question",
+        )
+    )
+    prepared = dependencies["service"].prepare_turn.return_value
+    object.__setattr__(prepared, "context", context)
+
+    created_sources: list[MessageSource] = []
+    dependencies["message_source_repository"].bulk_create.side_effect = lambda sources: (
+        created_sources.extend(sources)
     )
 
-    # Non-destructive: content is preserved with [99] intact
-    assert result.assistant_message.content == "Ground fact [1] and hallucinated [99]"
+    with caplog.at_level(logging.WARNING):
+        result = dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="Question",
+        )
+
+    assert result is not None
+    assert any(
+        "Citation validation failed" in record.message for record in caplog.records
+    )
+    assert len(created_sources) == 2
+    assert created_sources[0].is_cited is False
+    assert created_sources[1].is_cited is False
 
 
 def test_chat_route_returns_response_and_validation_errors(chat_client: TestClient):
@@ -750,7 +876,6 @@ def test_chat_service_casual_turn_skips_retrieval_and_context_assembly():
     result.assistant_message.updated_at = datetime.now(UTC)
     response = mapper.to_chat_response(
         assistant_message=result.assistant_message,
-        context=result.context,
     )
     assert response.sources == []
     assert response.assistant_message.content == "Grounded answer"
@@ -930,3 +1055,205 @@ def test_to_sse_event_casual_turn_payload_contract():
     assert complete_event["event"] == "complete"
     assert '"assistant_message"' in complete_event["data"]
     assert '"finish_reason": "stop"' in complete_event["data"]
+
+
+def test_chat_service_casual_turn_bypasses_citation_validation_with_brackets():
+    dependencies = _build_chat_service()
+    casual_text = (
+        "The first element is accessed using arr[0] or example [1, 2, 3] and [99]."
+    )
+    dependencies["llm_provider"].generate.return_value = LLMResponse(
+        content=casual_text,
+        model="gemini-test",
+        finish_reason="stop",
+        usage=None,
+    )
+
+    result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Hello there!",
+    )
+
+    assert result.context is None
+    assert result.routing.mode == ConversationMode.CASUAL
+    assert result.assistant_message.content == casual_text
+    assert result.assistant_message.sources == []
+
+
+def test_chat_service_casual_stream_bypasses_citation_validation_with_brackets():
+    dependencies = _build_chat_service()
+    casual_text = "The first element is accessed using arr[0] and [0]."
+    dependencies["llm_provider"].stream.return_value = _FakeLLMStream(
+        [
+            LLMStreamDelta(content=casual_text),
+            LLMStreamCompletion(
+                model="gemini-test",
+                finish_reason="stop",
+                usage=None,
+            ),
+        ]
+    )
+
+    prepared = dependencies["service"].prepare_turn(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="Hello there!",
+    )
+    assert prepared.context is None
+
+    stream = dependencies["service"].stream_prepared_turn(prepared=prepared)
+    events = list(stream)
+
+    complete_events = [e for e in events if e.type == ChatStreamEventType.COMPLETE]
+    assert len(complete_events) == 1
+    assert complete_events[0].payload.assistant_message.content == casual_text
+
+
+def test_chat_service_knowledge_turn_with_code_brackets_validates_successfully():
+    dependencies = _build_chat_service()
+    code_text = "In Python use `arr[0]` or ```python\nmatrix[1, 2]\n``` and docs [1]."
+    dependencies["llm_provider"].generate.return_value = LLMResponse(
+        content=code_text,
+        model="gemini-test",
+        finish_reason="stop",
+        usage=None,
+    )
+    chunk_id = uuid4()
+    context = AssembledContext(
+        query="Question",
+        block="Context",
+        chunks=[
+            ContextChunk(
+                citation=1,
+                chunk_id=chunk_id,
+                document_id=uuid4(),
+                document_name="Python Guide",
+                chunk_index=0,
+                similarity=0.95,
+                content="Guide text",
+            )
+        ],
+    )
+    dependencies["service"].prepare_turn = MagicMock(
+        return_value=dependencies["service"].prepare_turn(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="How to index arrays in Python?",
+        )
+    )
+    prepared = dependencies["service"].prepare_turn.return_value
+    object.__setattr__(prepared, "context", context)
+
+    result = dependencies["service"].send_message(
+        user_id=dependencies["user_id"],
+        conversation_id=dependencies["conversation"].id,
+        content="How to index arrays in Python?",
+    )
+
+    assert result.assistant_message.content == code_text
+
+
+def test_chat_service_knowledge_turn_rejects_unsupported_citation_syntax():
+    dependencies = _build_chat_service()
+    dependencies["service"]._citation_validation_strict = True
+    dependencies["llm_provider"].generate.return_value = LLMResponse(
+        content="As explained in [01] and [1, 2].",
+        model="gemini-test",
+        finish_reason="stop",
+        usage=None,
+    )
+    context = AssembledContext(
+        query="Question",
+        block="Context",
+        chunks=[
+            ContextChunk(
+                citation=1,
+                chunk_id=uuid4(),
+                document_id=uuid4(),
+                document_name="Guide",
+                chunk_index=0,
+                similarity=0.95,
+                content="Guide text",
+            )
+        ],
+    )
+    dependencies["service"].prepare_turn = MagicMock(
+        return_value=dependencies["service"].prepare_turn(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="How does it work?",
+        )
+    )
+    prepared = dependencies["service"].prepare_turn.return_value
+    object.__setattr__(prepared, "context", context)
+
+    with pytest.raises(CitationValidationException) as exc_info:
+        dependencies["service"].send_message(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="How does it work?",
+        )
+
+    assert exc_info.value.message == "Assistant response failed citation validation"
+    assert exc_info.value.code == "VALIDATION_ERROR"
+
+
+def test_chat_service_stream_lenient_policy_with_invalid_citation(caplog):
+    dependencies = _build_chat_service()
+    assert dependencies["service"]._citation_validation_strict is False
+
+    class _Stream:
+        def __iter__(self):
+            yield LLMStreamDelta(content="Information based on [9]")
+            yield LLMStreamCompletion(
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            )
+
+        def close(self):
+            pass
+
+    dependencies["llm_provider"].stream.return_value = _Stream()
+
+    context = AssembledContext(
+        query="Question",
+        block="Context",
+        chunks=[
+            ContextChunk(
+                citation=1,
+                chunk_id=uuid4(),
+                document_id=uuid4(),
+                document_name="Guide",
+                chunk_index=0,
+                similarity=0.95,
+                content="Guide text",
+            )
+        ],
+    )
+    dependencies["service"].prepare_turn = MagicMock(
+        return_value=dependencies["service"].prepare_turn(
+            user_id=dependencies["user_id"],
+            conversation_id=dependencies["conversation"].id,
+            content="How does it work?",
+        )
+    )
+    prepared = dependencies["service"].prepare_turn.return_value
+    object.__setattr__(prepared, "context", context)
+
+    created_sources: list[MessageSource] = []
+    dependencies["message_source_repository"].bulk_create.side_effect = lambda sources: (
+        created_sources.extend(sources)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        events = list(dependencies["service"].stream_prepared_turn(prepared=prepared))
+
+    assert any(e.type.value in ("run_finished", "complete") for e in events)
+    assert any(
+        "Citation validation failed" in record.message for record in caplog.records
+    )
+    assert len(created_sources) == 1
+    assert created_sources[0].citation_number == 1
+    assert created_sources[0].is_cited is False

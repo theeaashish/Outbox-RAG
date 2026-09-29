@@ -4,16 +4,52 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from app.core.pagination import CursorCodec, CursorPage, CursorResource
-from app.db.models import Conversation, Message
+from app.db.models import Conversation, Message, MessageFeedback, MessageSource
+from app.db.models.enums import FeedbackRating
 from app.modules.conversations.schemas import (
     ConversationCursorPageResponse,
     ConversationListResponse,
     ConversationResponse,
     CursorPageInfo,
     MessageCursorPageResponse,
+    MessageFeedbackResponse,
     MessageListResponse,
     MessageResponse,
+    MessageSourceResponse,
 )
+
+
+def to_message_source_response(source: MessageSource) -> MessageSourceResponse:
+    """Map a MessageSource ORM model to its API response."""
+
+    return MessageSourceResponse(
+        id=source.id,
+        citation=source.citation_number,
+        is_cited=source.is_cited,
+        source_order=source.source_order,
+        document_id=source.document_id,
+        document_chunk_id=source.document_chunk_id,
+        document_name=source.document_name_snapshot,
+        chunk_index=source.chunk_index_snapshot,
+        score=source.retrieval_score,
+        page_start=source.page_start_snapshot,
+        page_end=source.page_end_snapshot,
+    )
+
+
+def to_message_feedback_response(
+    feedback: MessageFeedback,
+) -> MessageFeedbackResponse:
+    """Map a MessageFeedback ORM model to its API response."""
+
+    return MessageFeedbackResponse(
+        id=feedback.id,
+        message_id=feedback.message_id,
+        user_id=feedback.user_id,
+        rating=feedback.rating,
+        created_at=feedback.created_at,
+        updated_at=feedback.updated_at,
+    )
 
 
 def to_conversation_response(conversation: Conversation) -> ConversationResponse:
@@ -39,7 +75,11 @@ def to_conversation_list_response(
     )
 
 
-def to_message_response(message: Message) -> MessageResponse:
+def to_message_response(
+    message: Message,
+    *,
+    feedback: FeedbackRating | None = None,
+) -> MessageResponse:
     """Map a message orm model to its API response."""
 
     return MessageResponse(
@@ -48,16 +88,27 @@ def to_message_response(message: Message) -> MessageResponse:
         content=message.content,
         created_at=message.created_at,
         updated_at=message.updated_at,
+        sources=[to_message_source_response(s) for s in message.sources],
+        feedback=feedback,
     )
 
 
 def to_message_list_response(
     messages: Sequence[Message],
+    *,
+    feedback_map: dict[UUID, FeedbackRating] | None = None,
 ) -> MessageListResponse:
     """Map a list of message orm models to their API response."""
 
+    feedback_lookup = feedback_map or {}
     return MessageListResponse(
-        results=[to_message_response(message) for message in messages]
+        results=[
+            to_message_response(
+                message,
+                feedback=feedback_lookup.get(message.id),
+            )
+            for message in messages
+        ]
     )
 
 
@@ -88,11 +139,19 @@ def to_message_cursor_page_response(
     page_size: int,
     conversation_id: UUID,
     cursor_codec: CursorCodec,
+    feedback_map: dict[UUID, FeedbackRating] | None = None,
 ) -> MessageCursorPageResponse:
     """Map a message keyset page to the v2 API contract."""
 
+    feedback_lookup = feedback_map or {}
     return MessageCursorPageResponse(
-        items=[to_message_response(item) for item in page.items],
+        items=[
+            to_message_response(
+                item,
+                feedback=feedback_lookup.get(item.id),
+            )
+            for item in page.items
+        ],
         page_info=_to_page_info(
             page=page,
             page_size=page_size,

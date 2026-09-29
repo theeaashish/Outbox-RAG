@@ -7,7 +7,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ResourceNotFoundException, ValidationException
+from app.core.exceptions import (
+    MessageNotAssistantException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from app.core.pagination import (
     CursorCodec,
     CursorPage,
@@ -15,10 +19,12 @@ from app.core.pagination import (
     CursorResource,
     InvalidCursorError,
 )
-from app.db.models import Conversation, KnowledgeBase, Message
+from app.db.models import Conversation, KnowledgeBase, Message, MessageFeedback
+from app.db.models.enums import FeedbackRating, MessageRole
 from app.repositories.conversation import ConversationRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
+from app.repositories.message_feedback import MessageFeedbackRepository
 from app.repositories.project import ProjectRepository
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,7 @@ class ConversationService:
         project_repository: ProjectRepository,
         message_repository: MessageRepository,
         cursor_codec: CursorCodec,
+        message_feedback_repository: MessageFeedbackRepository | None = None,
     ) -> None:
         self._db = db
         self._conversation_repository = conversation_repository
@@ -43,6 +50,11 @@ class ConversationService:
         self._project_repository = project_repository
         self._message_repository = message_repository
         self._cursor_codec = cursor_codec
+        self._message_feedback_repository = (
+            message_feedback_repository
+            if message_feedback_repository is not None
+            else MessageFeedbackRepository(db=db)
+        )
 
     @property
     def cursor_codec(self) -> CursorCodec:
@@ -323,8 +335,8 @@ class ConversationService:
         page_size: int,
         after: str | None = None,
         before: str | None = None,
-    ) -> CursorPage[Message]:
-        """List newest-first conversation messages through a signed cursor page."""
+    ) -> tuple[CursorPage[Message], dict[UUID, FeedbackRating]]:
+        """List newest-first conversation messages through a signed cursor page with user-scoped feedback map."""
 
         self._get_conversation(
             user_id=user_id,
@@ -336,13 +348,102 @@ class ConversationService:
             after=after,
             before=before,
         )
-        return self._message_repository.list_page_by_conversation(
+        page = self._message_repository.list_page_by_conversation(
             conversation_id=conversation_id,
             page_size=page_size,
             snapshot_timestamp=snapshot_timestamp,
             after=after_position,
             before=before_position,
         )
+        assistant_ids = [m.id for m in page.items if m.role == MessageRole.ASSISTANT]
+        feedback_map = (
+            self._message_feedback_repository.get_ratings_for_messages_and_user(
+                user_id=user_id,
+                message_ids=assistant_ids,
+            )
+            if assistant_ids
+            else {}
+        )
+        return page, feedback_map
+
+    def get_user_feedback_map(
+        self,
+        *,
+        user_id: UUID,
+        message_ids: Sequence[UUID],
+    ) -> dict[UUID, FeedbackRating]:
+        """Batch-load user feedback for assistant messages."""
+        if not message_ids:
+            return {}
+        return self._message_feedback_repository.get_ratings_for_messages_and_user(
+            user_id=user_id,
+            message_ids=message_ids,
+        )
+
+    def _get_user_assistant_message(
+        self,
+        *,
+        user_id: UUID,
+        message_id: UUID,
+    ) -> Message:
+        message = self._message_repository.get_by_user_and_id(
+            user_id=user_id,
+            message_id=message_id,
+        )
+        if message is None:
+            raise ResourceNotFoundException("Message not found")
+        if message.role != MessageRole.ASSISTANT:
+            raise MessageNotAssistantException(
+                "Only assistant messages can receive feedback"
+            )
+        return message
+
+    def upsert_feedback(
+        self,
+        *,
+        user_id: UUID,
+        message_id: UUID,
+        rating: FeedbackRating,
+    ) -> MessageFeedback:
+        """Upsert user feedback for an assistant message."""
+        self._get_user_assistant_message(
+            user_id=user_id,
+            message_id=message_id,
+        )
+
+        try:
+            feedback = self._message_feedback_repository.upsert(
+                message_id=message_id,
+                user_id=user_id,
+                rating=rating,
+            )
+            self._db.commit()
+            return feedback
+        except Exception:
+            self._db.rollback()
+            raise
+
+    def delete_feedback(
+        self,
+        *,
+        user_id: UUID,
+        message_id: UUID,
+    ) -> None:
+        """Delete user feedback for an assistant message."""
+        self._get_user_assistant_message(
+            user_id=user_id,
+            message_id=message_id,
+        )
+
+        try:
+            self._message_feedback_repository.delete_by_message_and_user(
+                message_id=message_id,
+                user_id=user_id,
+            )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
     def delete_conversation(
         self,

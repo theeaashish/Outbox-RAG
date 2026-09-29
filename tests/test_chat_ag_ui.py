@@ -21,6 +21,7 @@ from app.core.ai.routing.models import (
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
+    CitationValidationException,
     DatabaseException,
 )
 from app.db.models import Message, User
@@ -187,6 +188,7 @@ def test_mapper_events_and_encoding():
         chunks=[
             ContextChunk(
                 citation=1,
+                chunk_id=uuid4(),
                 document_id=doc_id,
                 document_name="doc.pdf",
                 chunk_index=0,
@@ -1022,5 +1024,131 @@ def test_controller_stream_ag_ui_emits_ping_heartbeat():
             assert len(pings) >= 1
             ag_ui_events = [t for t in text_chunks if t.startswith("data: ")]
             assert len(ag_ui_events) >= 1
+
+    asyncio.run(_test())
+
+
+def test_controller_stream_ag_ui_citation_validation_failure_emits_validation_error():
+    async def _test():
+        prepared = _make_dummy_prepared()
+
+        class _CitationFailingStream:
+            def __init__(self):
+                self._yielded_delta = False
+                self.snapshot = MagicMock()
+                self.snapshot.cancel_reason = None
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if not self._yielded_delta:
+                    self._yielded_delta = True
+                    return ChatStreamEvent(
+                        type=ChatStreamEventType.TOKEN,
+                        payload=ChatStreamToken(delta="Answer with [99]"),
+                    )
+                raise CitationValidationException(
+                    "Assistant response failed citation validation",
+                    invalid_citations=[99],
+                )
+
+            def request_cancel(self, reason):
+                return True
+
+            def close(self):
+                pass
+
+        mock_service = MagicMock(spec=ChatService)
+        mock_service.prepare_turn.return_value = prepared
+        mock_service.stream_prepared_turn.return_value = _CitationFailingStream()
+
+        controller = ChatController(chat_service=mock_service)
+        mock_request = AsyncMock()
+        mock_request.is_disconnected.return_value = False
+
+        response = await controller.stream_ag_ui_message(
+            user_id=prepared.user_id,
+            conversation_id=prepared.conversation_id,
+            content="Hello",
+            request=mock_request,
+        )
+
+        collected_frames = []
+        async for frame in response.body_iterator:
+            for line in _to_text(frame).strip().split("\n\n"):
+                if line.startswith("data: "):
+                    collected_frames.append(json.loads(line[6:]))
+
+        types = [f["type"] for f in collected_frames]
+        assert "RUN_STARTED" in types
+        assert "TEXT_MESSAGE_START" in types
+        assert "TEXT_MESSAGE_CONTENT" in types
+        # Invariants:
+        # 1. RUN_FINISHED and TEXT_MESSAGE_END must NEVER be emitted on failure
+        assert "TEXT_MESSAGE_END" not in types
+        assert "RUN_FINISHED" not in types
+        # 2. RUN_ERROR is emitted with code="VALIDATION_ERROR"
+        assert types[-1] == "RUN_ERROR"
+        assert collected_frames[-1]["code"] == "VALIDATION_ERROR"
+        assert "citation validation" in collected_frames[-1]["message"].lower()
+
+    asyncio.run(_test())
+
+
+def test_controller_stream_ag_ui_finalization_failure_emits_run_error():
+    async def _test():
+        prepared = _make_dummy_prepared()
+
+        class _FinalizationFailingStream:
+            def __init__(self):
+                self._yielded_delta = False
+                self.snapshot = MagicMock()
+                self.snapshot.cancel_reason = None
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if not self._yielded_delta:
+                    self._yielded_delta = True
+                    return ChatStreamEvent(
+                        type=ChatStreamEventType.TOKEN,
+                        payload=ChatStreamToken(delta="Valid content"),
+                    )
+                raise DatabaseException("Failed to finalize assistant turn")
+
+            def request_cancel(self, reason):
+                return True
+
+            def close(self):
+                pass
+
+        mock_service = MagicMock(spec=ChatService)
+        mock_service.prepare_turn.return_value = prepared
+        mock_service.stream_prepared_turn.return_value = _FinalizationFailingStream()
+
+        controller = ChatController(chat_service=mock_service)
+        mock_request = AsyncMock()
+        mock_request.is_disconnected.return_value = False
+
+        response = await controller.stream_ag_ui_message(
+            user_id=prepared.user_id,
+            conversation_id=prepared.conversation_id,
+            content="Hello",
+            request=mock_request,
+        )
+
+        collected_frames = []
+        async for frame in response.body_iterator:
+            for line in _to_text(frame).strip().split("\n\n"):
+                if line.startswith("data: "):
+                    collected_frames.append(json.loads(line[6:]))
+
+        types = [f["type"] for f in collected_frames]
+        # Invariants:
+        assert "TEXT_MESSAGE_END" not in types
+        assert "RUN_FINISHED" not in types
+        assert types[-1] == "RUN_ERROR"
 
     asyncio.run(_test())

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
+    CitationValidationException,
     DatabaseException,
     ResourceNotFoundException,
 )
@@ -198,13 +199,19 @@ async def _stream_loop[T](
                 message="Failed to save assistant response",
             ):
                 yield item
-    except AIServiceException:
+    except AIServiceException as exc:
         if not terminal_emitted:
             terminal_emitted = True
             if stream.snapshot.cancel_reason == ChatStreamCancelReason.OUTPUT_LIMIT:
                 for item in sink.on_error(
                     code="OUTPUT_LIMIT",
                     message="Assistant response exceeded the output limit",
+                ):
+                    yield item
+            elif isinstance(exc, CitationValidationException):
+                for item in sink.on_error(
+                    code="VALIDATION_ERROR",
+                    message="Assistant response failed citation validation",
                 ):
                     yield item
             else:
@@ -265,7 +272,6 @@ class ChatController:
 
         return mapper.to_chat_response(
             assistant_message=result.assistant_message,
-            context=result.context,
         )
 
     async def stream_message(
