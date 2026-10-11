@@ -23,7 +23,7 @@ from app.core.exceptions import (
     TransientStorageException,
 )
 from app.core.storage.base import StorageService, StoredObjectMetadata
-from app.core.storage.presigned import PresignedUrlService
+from app.core.storage.presigned import PresignedUrl, PresignedUrlService
 
 logger = logging.getLogger(__name__)
 
@@ -405,3 +405,78 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
                 exc=exc,
                 message="Failed to delete stored object",
             )
+
+    def create_upload_url(
+        self, *, key: str, content_type: str, expires_in: int
+    ) -> PresignedUrl:
+        """Create a temporary URL that allows a client to upload an object."""
+
+        if not key.strip():
+            raise ValueError("Storage key must not be empty")
+
+        if not content_type.strip():
+            raise ValueError("Content type must not be empty")
+
+        if not 1 <= expires_in <= 604800:
+            raise ValueError(
+                "Presigned URL expiry must be between 1 and 604800 seconds"
+            )
+
+        try:
+            url = self._client.generate_presigned_url(
+                ClientMethod="put_object",
+                Params={
+                    "Bucket": self._bucket_name,
+                    "Key": key,
+                    "ContentType": content_type,
+                },
+                ExpiresIn=expires_in,
+                HttpMethod="PUT",
+            )
+
+        except BotoCoreError as exc:
+            self._raise_for_boto_core_error(
+                operation="presign_put_object",
+                key=key,
+                exc=exc,
+                message="Failed to generate presigned upload URL",
+            )
+
+        return PresignedUrl(
+            url=url,
+            method="PUT",
+            expires_in=expires_in,
+            headers={"Content-Type": content_type},
+        )
+
+    def create_download_url(self, *, key: str, expires_in: int) -> PresignedUrl:
+        """Create a temporary URL that allows a client to download an object."""
+
+        if not key.strip():
+            raise ValueError("Storage key must not be empty")
+
+        if not 1 <= expires_in <= 604800:
+            raise ValueError(
+                "Presigned URL expiry must be between 1 and 604800 seconds"
+            )
+
+        try:
+            url = self._client.generate_presigned_url(
+                ClientMethod="get_object",
+                Params={
+                    "Bucket": self._bucket_name,
+                    "Key": key,
+                },
+                ExpiresIn=expires_in,
+                HttpMethod="GET",
+            )
+
+        except BotoCoreError as exc:
+            self._raise_for_boto_core_error(
+                operation="presign_get_object",
+                key=key,
+                exc=exc,
+                message="Failed to generate presigned download URL",
+            )
+
+        return PresignedUrl(url=url, method="GET", expires_in=expires_in, headers={})
