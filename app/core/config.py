@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # storage and upload
 
-    storage_backend: StorageBackend = Field(default=StorageBackend.LOCAL)
+    storage_backend: StorageBackend = Field(default=StorageBackend.S3)
 
     upload_directory: str = Field(default="uploads")
 
