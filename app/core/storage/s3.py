@@ -326,3 +326,82 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
                             "error_type": type(exc).__name__,
                         },
                     )
+
+    def save(self, key: str, content: bytes) -> None:
+        """Persist content at the given storage key."""
+
+        try:
+            self._client.put_object(
+                Bucket=self._bucket_name,
+                Key=key,
+                Body=content,
+            )
+
+        except ClientError as exc:
+            self._raise_for_client_error(
+                operation="put_object",
+                key=key,
+                exc=exc,
+                transient_message=("Temporary storage failure while saving object"),
+                failure_message="Failed to save stored object",
+            )
+
+        except (
+            ConnectTimeoutError,
+            ConnectionClosedError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        ) as exc:
+            self._raise_for_transient_error(
+                operation="put_object",
+                key=key,
+                exc=exc,
+                message="Temporary storage failure while saving object",
+            )
+
+        except BotoCoreError as exc:
+            self._raise_for_boto_core_error(
+                operation="put_object",
+                key=key,
+                exc=exc,
+                message="Failed to save stored object",
+            )
+
+    def delete(self, key: str) -> None:
+        """Delete the object at the given storage key if it exists."""
+
+        try:
+            self._client.delete_object(
+                Bucket=self._bucket_name,
+                Key=key,
+            )
+
+        except ClientError as exc:
+            self._raise_for_client_error(
+                operation="delete_object",
+                key=key,
+                exc=exc,
+                transient_message=("Temporary storage failure while deleting object"),
+                failure_message="Failed to delete stored object",
+            )
+
+        except (
+            ConnectTimeoutError,
+            ConnectionClosedError,
+            EndpointConnectionError,
+            ReadTimeoutError,
+        ) as exc:
+            self._raise_for_transient_error(
+                operation="delete_object",
+                key=key,
+                exc=exc,
+                message="Temporary storage failure while deleting object",
+            )
+
+        except BotoCoreError as exc:
+            self._raise_for_boto_core_error(
+                operation="delete_object",
+                key=key,
+                exc=exc,
+                message="Failed to delete stored object",
+            )
