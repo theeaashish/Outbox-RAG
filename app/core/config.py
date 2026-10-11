@@ -2,8 +2,13 @@ import json
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class StorageBackend(StrEnum):
+    LOCAL = "local"
+    S3 = "s3"
 
 
 class Environment(StrEnum):
@@ -61,11 +66,35 @@ class Settings(BaseSettings):
 
     gemini_chat_max_output_tokens: int = Field(default=4_096, ge=1)
 
-    # upload
+    # storage and upload
+
+    storage_backend: StorageBackend = Field(default=StorageBackend.LOCAL)
 
     upload_directory: str = Field(default="uploads")
 
-    max_upload_size_mb: int = Field(default=20)
+    max_upload_size_mb: int = Field(default=10, ge=1)
+
+    # S3-compatible storage (Tigris)
+
+    s3_bucket_name: str = Field(default="")
+
+    s3_endpoint_url: str = Field(
+        default="https://t3.storage.dev",
+    )
+
+    s3_region_name: str = Field(default="auto")
+
+    s3_access_key_id: str = Field(default="")
+
+    s3_secret_access_key: SecretStr = Field(
+        default=SecretStr(""),
+    )
+
+    presigned_url_expiry_seconds: int = Field(
+        default=600,
+        ge=1,
+        le=3600,
+    )
 
     # retrieval
 
