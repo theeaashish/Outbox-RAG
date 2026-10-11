@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
 class PresignedUrl:
-    """Temporary authorization for a storage operation."""
+    """Temporary authorization details for a storage operation."""
 
     url: str
     method: str
     expires_in: int
-    headers: dict[str, str]
+    headers: dict[str, str] = field(default_factory=dict)
+    form_fields: dict[str, str] = field(default_factory=dict)
 
 
 class PresignedUrlService(ABC):
@@ -24,8 +25,9 @@ class PresignedUrlService(ABC):
         key: str,
         content_type: str,
         expires_in: int,
+        max_size_bytes: int,
     ) -> PresignedUrl:
-        """Create a temporary URL for uploading an object."""
+        """Create temporary authorization for uploading an object."""
         raise NotImplementedError
 
     @abstractmethod
@@ -35,5 +37,5 @@ class PresignedUrlService(ABC):
         key: str,
         expires_in: int,
     ) -> PresignedUrl:
-        """Create a temporary URL for downloading an object."""
+        """Create a temporary URL that allows a client to download an object."""
         raise NotImplementedError

@@ -407,7 +407,12 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
             )
 
     def create_upload_url(
-        self, *, key: str, content_type: str, expires_in: int
+        self,
+        *,
+        key: str,
+        content_type: str,
+        expires_in: int,
+        max_size_bytes: int,
     ) -> PresignedUrl:
         """Create a temporary URL that allows a client to upload an object."""
 
@@ -422,16 +427,21 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
                 "Presigned URL expiry must be between 1 and 604800 seconds"
             )
 
+        if max_size_bytes < 1:
+            raise ValueError("Maximum upload size must be positive")
+
         try:
-            url = self._client.generate_presigned_url(
-                ClientMethod="put_object",
-                Params={
-                    "Bucket": self._bucket_name,
-                    "Key": key,
-                    "ContentType": content_type,
+            response = self._client.generate_presigned_post(
+                Bucket=self._bucket_name,
+                Key=key,
+                Fields={
+                    "Content-Type": content_type,
                 },
+                Conditions=[
+                    {"Content-Type": content_type},
+                    ["content-length-range", 1, max_size_bytes],
+                ],
                 ExpiresIn=expires_in,
-                HttpMethod="PUT",
             )
 
         except BotoCoreError as exc:
@@ -443,7 +453,7 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
             )
 
         return PresignedUrl(
-            url=url,
+            url=response["url"],
             method="PUT",
             expires_in=expires_in,
             headers={"Content-Type": content_type},
