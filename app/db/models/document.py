@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -35,7 +36,7 @@ class Document(UUIDMixin, TimestampMixin, Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256_hash: Mapped[str] = mapped_column(String(64), nullable=True)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(
@@ -92,5 +93,10 @@ class Document(UUIDMixin, TimestampMixin, Base):
             "ix_documents_kb_created_at_desc",
             "knowledge_base_id",
             text("created_at DESC"),
+        ),
+        CheckConstraint(
+            "(status::text = 'uploading' AND sha256_hash IS NULL) "
+            "OR (status::text <> 'uploading' AND sha256_hash IS NOT NULL)",
+            name="ck_documents_uploading_hash_state",
         ),
     )

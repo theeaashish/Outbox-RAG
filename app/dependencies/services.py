@@ -14,6 +14,7 @@ from app.core.document.hasher import FileHasher
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
 from app.core.storage import StorageService
+from app.core.storage.presigned import PresignedUrlService
 from app.db.session import SessionLocal
 from app.dependencies.core import (
     get_document_chunker,
@@ -21,6 +22,7 @@ from app.dependencies.core import (
     get_embedding_generator,
     get_file_hasher,
     get_password_hasher,
+    get_presigned_url_service,
     get_session_token_service,
     get_storage_service,
     get_upload_validator,
@@ -97,6 +99,11 @@ FileHasherDep = Annotated[
 StorageServiceDep = Annotated[
     StorageService,
     Depends(get_storage_service),
+]
+
+PresignedUrlServiceDep = Annotated[
+    PresignedUrlService,
+    Depends(get_presigned_url_service),
 ]
 
 UserRepositoryDep = Annotated[
