@@ -21,6 +21,7 @@ from app.dependencies.core import (
     get_document_parser_registry,
     get_embedding_generator,
     get_file_hasher,
+    get_optional_presigned_url_service,
     get_password_hasher,
     get_presigned_url_service,
     get_session_token_service,
@@ -106,6 +107,11 @@ PresignedUrlServiceDep = Annotated[
     Depends(get_presigned_url_service),
 ]
 
+OptionalPresignedUrlServiceDep = Annotated[
+    PresignedUrlService | None,
+    Depends(get_optional_presigned_url_service),
+]
+
 UserRepositoryDep = Annotated[
     UserRepository,
     Depends(get_user_repository),
@@ -139,6 +145,7 @@ def get_document_service(
     validator: UploadValidatorDep,
     hasher: FileHasherDep,
     storage: StorageServiceDep,
+    presigned_url_service: OptionalPresignedUrlServiceDep,
 ) -> DocumentService:
     """Return a configured DocumentService."""
 
@@ -149,6 +156,7 @@ def get_document_service(
         validator=validator,
         hasher=hasher,
         storage=storage,
+        presigned_url_service=presigned_url_service,
     )
 
 

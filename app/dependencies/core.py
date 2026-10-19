@@ -177,3 +177,17 @@ def get_presigned_url_service() -> PresignedUrlService:
         raise StorageException("Presigned URLs require the S3 storage backend")
 
     return get_s3_object_storage()
+
+
+@lru_cache
+def get_optional_presigned_url_service() -> PresignedUrlService | None:
+    """Return upload-authorization support when the backend provides it.
+
+    Legacy document routes must keep working on the local backend, so this is
+    resolved lazily and only direct uploads require the capability.
+    """
+
+    if settings.storage_backend != StorageBackend.S3:
+        return None
+
+    return get_s3_object_storage()

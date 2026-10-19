@@ -412,7 +412,7 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
         key: str,
         content_type: str,
         expires_in: int,
-        max_size_bytes: int,
+        expected_size_bytes: int,
     ) -> PresignedUrl:
         """Create a temporary URL that allows a client to upload an object."""
 
@@ -427,8 +427,8 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
                 "Presigned URL expiry must be between 1 and 604800 seconds"
             )
 
-        if max_size_bytes < 1:
-            raise ValueError("Maximum upload size must be positive")
+        if expected_size_bytes < 1:
+            raise ValueError("Expected upload size must be positive")
 
         try:
             response = self._client.generate_presigned_post(
@@ -439,14 +439,14 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
                 },
                 Conditions=[
                     {"Content-Type": content_type},
-                    ["content-length-range", 1, max_size_bytes],
+                    ["content-length-range", expected_size_bytes, expected_size_bytes],
                 ],
                 ExpiresIn=expires_in,
             )
 
         except BotoCoreError as exc:
             self._raise_for_boto_core_error(
-                operation="presign_put_object",
+                operation="presign_post_object",
                 key=key,
                 exc=exc,
                 message="Failed to generate presigned upload URL",
@@ -454,9 +454,10 @@ class S3ObjectStorage(StorageService, PresignedUrlService):
 
         return PresignedUrl(
             url=response["url"],
-            method="PUT",
+            method="POST",
             expires_in=expires_in,
-            headers={"Content-Type": content_type},
+            headers={},
+            form_fields=response.get("fields", {}),
         )
 
     def create_download_url(self, *, key: str, expires_in: int) -> PresignedUrl:

@@ -56,3 +56,14 @@ class InitiateDocumentUploadResponse(BaseModel):
 
     document_id: UUID
     upload: UploadAuthorizationResponse
+
+
+class CompleteDocumentUploadResponse(DocumentResponse):
+    """Response returned after a direct-to-storage document upload is completed."""
+
+
+class RefreshUploadAuthorizationResponse(BaseModel):
+    """Response returned when upload authorization is refreshed."""
+
+    document_id: UUID
+    upload: UploadAuthorizationResponse

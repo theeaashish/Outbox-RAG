@@ -7,7 +7,11 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
-from app.core.exceptions import StorageException, TransientStorageException
+from app.core.exceptions import (
+    ResourceNotFoundException,
+    StorageException,
+    TransientStorageException,
+)
 from app.core.storage.base import StorageService, StoredObjectMetadata
 
 logger = logging.getLogger(__name__)
@@ -126,7 +130,7 @@ class LocalFilesystemStorage(StorageService):
 
         try:
             if not target.is_file():
-                raise StorageException("Stored object not found")
+                raise ResourceNotFoundException("Stored object not found")
 
             stat_result = target.stat()
 
@@ -136,14 +140,14 @@ class LocalFilesystemStorage(StorageService):
                 etag=None,
             )
 
-        except StorageException:
+        except (ResourceNotFoundException, StorageException):
             raise
         except FileNotFoundError as exc:
             logger.warning(
                 "Stored object not found",
                 extra={"key": key},
             )
-            raise StorageException("Stored object not found") from exc
+            raise ResourceNotFoundException("Stored object not found") from exc
         except OSError as exc:
             logger.exception(
                 "Storage head failed",
@@ -163,15 +167,17 @@ class LocalFilesystemStorage(StorageService):
         target = self._resolve_safe_path(key)
 
         try:
+            if not target.is_file():
+                raise ResourceNotFoundException("Stored object not found")
             return target.read_bytes()
-        except StorageException:
+        except (ResourceNotFoundException, StorageException):
             raise
         except FileNotFoundError as exc:
             logger.warning(
                 "Stored file not found",
                 extra={"path": key},
             )
-            raise StorageException("Stored file not found") from exc
+            raise ResourceNotFoundException("Stored object not found") from exc
         except PermissionError as exc:
             logger.exception("Storage read permission denied", extra={"path": key})
             raise StorageException("Permission denied accessing storage file") from exc

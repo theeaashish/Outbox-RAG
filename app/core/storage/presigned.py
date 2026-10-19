@@ -25,9 +25,9 @@ class PresignedUrlService(ABC):
         key: str,
         content_type: str,
         expires_in: int,
-        max_size_bytes: int,
+        expected_size_bytes: int,
     ) -> PresignedUrl:
-        """Create temporary authorization for uploading an object."""
+        """Create temporary authorization for uploading an object of an expected size."""
         raise NotImplementedError
 
     @abstractmethod

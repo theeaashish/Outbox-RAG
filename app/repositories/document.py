@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Document, KnowledgeBase
+from app.db.models.enums import DocumentStatus
 from app.repositories.base import BaseRepository
 
 
@@ -59,7 +61,12 @@ class DocumentRepository(BaseRepository[Document]):
         document_id: UUID,
     ) -> Document | None:
         """Lock and retrieve a document row for exclusive processing."""
-        statement = select(Document).where(Document.id == document_id).with_for_update()
+        statement = (
+            select(Document)
+            .where(Document.id == document_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         return self.db.scalar(statement)
 
     def get_by_hash(
@@ -69,8 +76,39 @@ class DocumentRepository(BaseRepository[Document]):
         sha256_hash: str,
     ) -> Document | None:
         """Retrieve a document by its hash."""
-        statement = select(Document).where(
-            Document.knowledge_base_id == knowledge_base_id,
-            Document.sha256_hash == sha256_hash,
+        statement = (
+            select(Document)
+            .where(
+                Document.knowledge_base_id == knowledge_base_id,
+                Document.sha256_hash == sha256_hash,
+            )
+            .execution_options(populate_existing=True)
         )
         return self.db.scalar(statement)
+
+    def exists_by_storage_path(
+        self,
+        *,
+        storage_path: str,
+    ) -> bool:
+        """Check whether a document referencing the storage path exists."""
+        statement = select(exists().where(Document.storage_path == storage_path))
+        return bool(self.db.scalar(statement))
+
+    def list_stale_uploading_documents(
+        self,
+        *,
+        updated_before: datetime,
+        limit: int = 100,
+    ) -> list[tuple[UUID, str]]:
+        """Retrieve (id, storage_path) of documents in UPLOADING state prior to a cutoff."""
+        statement = (
+            select(Document.id, Document.storage_path)
+            .where(
+                Document.status == DocumentStatus.UPLOADING,
+                Document.updated_at < updated_before,
+            )
+            .order_by(Document.updated_at.asc())
+            .limit(limit)
+        )
+        return list(self.db.execute(statement).tuples().all())
