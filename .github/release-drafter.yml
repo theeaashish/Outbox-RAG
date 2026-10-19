@@ -1,0 +1,80 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+
+categories:
+  - title: "💥 Breaking Changes"
+    labels:
+      - "breaking-change"
+      - "breaking"
+  - title: "🚀 Features"
+    labels:
+      - "feature"
+      - "feat"
+      - "enhancement"
+  - title: "🐛 Bug Fixes"
+    labels:
+      - "fix"
+      - "bug"
+      - "bugfix"
+  - title: "🔒 Security"
+    labels:
+      - "security"
+  - title: "🗄️ Database & Migrations"
+    labels:
+      - "database"
+  - title: "📚 Documentation"
+    labels:
+      - "documentation"
+      - "docs"
+  - title: "🧰 Maintenance & Dependencies"
+    labels:
+      - "dependencies"
+      - "chore"
+      - "ci"
+
+autolabeler:
+  - label: "breaking-change"
+    title:
+      - '/^[a-z]+(\(.*?\))?!:.+/'
+  - label: "feat"
+    branch:
+      - '/^feat(ure)?\/.+/'
+    title:
+      - '/^feat(\(.*?\))?!?:.+/'
+  - label: "fix"
+    branch:
+      - '/^(fix|bugfix|hotfix)\/.+/'
+    title:
+      - '/^fix(\(.*?\))?!?:.+/'
+  - label: "documentation"
+    branch:
+      - '/^docs?\/.+/'
+    title:
+      - '/^docs?(\(.*?\))?!?:.+/'
+
+change-template: "- $TITLE (#$NUMBER) by @$AUTHOR"
+
+version-resolver:
+  major:
+    labels:
+      - "major"
+      - "breaking-change"
+  minor:
+    labels:
+      - "minor"
+      - "feature"
+      - "feat"
+      - "enhancement"
+  patch:
+    labels:
+      - "patch"
+      - "fix"
+      - "bug"
+  default: patch
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
