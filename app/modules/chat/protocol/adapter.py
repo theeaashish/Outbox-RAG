@@ -100,6 +100,13 @@ class AGUIProtocolAdapter:
                 )
             complete_frames.append(
                 mapper.encode_event_bytes(
+                    mapper.to_sources_final_event(
+                        sources=event.payload.assistant_message.sources,
+                    )
+                )
+            )
+            complete_frames.append(
+                mapper.encode_event_bytes(
                     mapper.to_text_message_end(
                         message_id=self.assistant_message_id,
                     )

@@ -69,6 +69,24 @@ class QueryRouter:
         re.IGNORECASE,
     )
 
+    _ACKNOWLEDGMENT_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\s*"
+        r"(?:(?:ok(?:ay)?|alright|cool|great|perfect|awesome|nice)[\s,!.]+)?"
+        r"(?:got\s+it|understood|noted|makes\s+sense|all\s+clear|sounds\s+good|"
+        r"will\s+do|roger(?:\s+that)?|ok(?:ay)?|k|sure|alright|cool|great|"
+        r"perfect|awesome|fine|done)"
+        r"(?:\s+now)?"
+        r"(?:[\s,!.]+(?:sir|ma'?am|bro|man|buddy|team|everyone|thanks?|"
+        r"thank\s+you|cheers|much\s+appreciated|for\s+now)){0,2}"
+        r"[\s!.]*$",
+        re.IGNORECASE,
+    )
+
+    # Trailing whitespace, closing quotes/brackets, and emoji stripped when checking for '?'
+    _TRAILING_NON_PUNCT_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r'[\s"\'”’»)\]}\u2600-\u27bf\U0001f300-\U0001faff\ufe00-\ufe0f\u200d]+$'
+    )
+
     # Rule 3: Anaphoric follow-up cues
     _FOLLOW_UP_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
         r"(\b(can|could|would)\s+you\s+(explain|clarify|elaborate(\s+on)?|tell\s+me\s+more\s+about)\s+(that|this|it)\b|"
@@ -92,43 +110,54 @@ class QueryRouter:
             return QueryRoutingDecision(
                 mode=ConversationMode.KNOWLEDGE,
                 reason=RoutingReason.DEFAULT_KNOWLEDGE,
+                rule="default",
             )
 
-        # Rule 1: Strong Knowledge Signals (High Priority, beats greetings in mixed queries)
+        # Rule 1: Strong Knowledge Signals (High Priority, beats greetings/acks in mixed queries)
         if self._is_knowledge_signal(normalized_query):
             return QueryRoutingDecision(
                 mode=ConversationMode.KNOWLEDGE,
                 reason=RoutingReason.EXPLICIT_KNOWLEDGE,
+                rule="explicit_knowledge",
             )
 
         # Rule 2: High-Confidence Casual Signals (only when no knowledge signals exist)
-        if self._is_casual_signal(normalized_query):
+        casual_rule = self._match_casual_rule(
+            normalized_query,
+            assistant_pending_question=self._assistant_has_pending_question(
+                conversation
+            ),
+        )
+        if casual_rule is not None:
             return QueryRoutingDecision(
                 mode=ConversationMode.CASUAL,
                 reason=RoutingReason.EXPLICIT_CASUAL,
+                rule=casual_rule,
             )
 
-        # Rule 3: Follow-Up Analysis via Previous USER Turn
+        # Rule 3: Follow-Up Analysis via Previous Substantive USER Turn
         if self._is_follow_up_query(normalized_query):
             previous_user_turn = self._find_previous_user_turn(conversation)
             if previous_user_turn is not None:
-                # If the previous user turn was knowledge-oriented, this follow-up is knowledge-oriented
                 if self._is_knowledge_signal(
                     previous_user_turn.content
                 ) or not self._is_casual_signal(previous_user_turn.content):
                     return QueryRoutingDecision(
                         mode=ConversationMode.KNOWLEDGE,
                         reason=RoutingReason.KNOWLEDGE_FOLLOW_UP,
+                        rule="knowledge_follow_up",
                     )
                 return QueryRoutingDecision(
                     mode=ConversationMode.CASUAL,
                     reason=RoutingReason.CASUAL_FOLLOW_UP,
+                    rule="casual_follow_up",
                 )
 
         # Rule 4: Default Fallback -> KNOWLEDGE (Grounding preservation)
         return QueryRoutingDecision(
             mode=ConversationMode.KNOWLEDGE,
             reason=RoutingReason.DEFAULT_KNOWLEDGE,
+            rule="default",
         )
 
     @classmethod
@@ -140,25 +169,66 @@ class QueryRouter:
         )
 
     @classmethod
+    def _match_casual_rule(
+        cls,
+        text: str,
+        *,
+        assistant_pending_question: bool = False,
+    ) -> str | None:
+        """Return the matched casual rule name, or None if not a casual turn."""
+        if cls._GREETING_PATTERN.match(text):
+            return "greeting"
+        if cls._COURTESY_PATTERN.match(text):
+            return "courtesy"
+        if cls._IDENTITY_PATTERN.match(text):
+            return "identity"
+        if cls._CAPABILITY_PATTERN.match(text):
+            return "capability"
+        if cls._PLEASANTRY_PATTERN.match(text):
+            return "pleasantry"
+        if not assistant_pending_question and cls._ACKNOWLEDGMENT_PATTERN.match(text):
+            return "acknowledgment"
+        return None
+
+    @classmethod
     def _is_casual_signal(cls, text: str) -> bool:
-        """Check whether text is a high-confidence greeting, courtesy, identity, or capability turn."""
-        return bool(
-            cls._GREETING_PATTERN.match(text)
-            or cls._COURTESY_PATTERN.match(text)
-            or cls._IDENTITY_PATTERN.match(text)
-            or cls._CAPABILITY_PATTERN.match(text)
-            or cls._PLEASANTRY_PATTERN.match(text)
+        """Check whether text is a greeting, courtesy, identity, capability, pleasantry, or acknowledgment."""
+        return (
+            cls._match_casual_rule(text, assistant_pending_question=False) is not None
         )
+
+    @classmethod
+    def _is_non_substantive_closing_turn(cls, text: str) -> bool:
+        """Check whether a user turn is a courtesy or acknowledgment that should not anchor follow-ups."""
+        return bool(
+            cls._COURTESY_PATTERN.match(text) or cls._ACKNOWLEDGMENT_PATTERN.match(text)
+        )
+
+    @classmethod
+    def _assistant_has_pending_question(cls, conversation: list[ChatMessage]) -> bool:
+        """Return True if the most recent assistant message ends with a question mark."""
+        for msg in reversed(conversation):
+            if msg.role == MessageRole.ASSISTANT and msg.content.strip():
+                cleaned = cls._TRAILING_NON_PUNCT_RE.sub("", msg.content)
+                return cleaned.endswith(("?", "？"))
+        return False
 
     @classmethod
     def _is_follow_up_query(cls, text: str) -> bool:
         """Check whether text contains anaphoric pronouns or elliptical follow-up structure."""
         return bool(cls._FOLLOW_UP_PATTERN.search(text))
 
-    @staticmethod
-    def _find_previous_user_turn(conversation: list[ChatMessage]) -> ChatMessage | None:
-        """Scan backwards to find the most recent user turn with non-empty content."""
+    @classmethod
+    def _find_previous_user_turn(
+        cls, conversation: list[ChatMessage]
+    ) -> ChatMessage | None:
+        """
+        Scan backwards to find the most recent substantive user turn.
+        Skips courtesy and acknowledgment turns so follow-ups stay anchored to the prior topic.
+        """
         for msg in reversed(conversation):
-            if msg.role == MessageRole.USER and msg.content.strip():
-                return msg
+            if msg.role == MessageRole.USER:
+                stripped = msg.content.strip()
+                if stripped and not cls._is_non_substantive_closing_turn(stripped):
+                    return msg
         return None

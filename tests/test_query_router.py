@@ -216,3 +216,115 @@ def test_empty_query_defaults_to_knowledge(router: QueryRouter):
     decision = router.route(query="   ", conversation=[])
     assert decision.mode == ConversationMode.KNOWLEDGE
     assert decision.reason == RoutingReason.DEFAULT_KNOWLEDGE
+
+
+@pytest.mark.parametrize(
+    "ack",
+    [
+        "got it sir.",
+        "got it sir",
+        "understood thank you",
+        "noted bro",
+        "makes sense!",
+        "all clear for now",
+        "got it now",
+        "roger that",
+        "cool thanks",
+        "got it, thanks sir",
+        "ok cool, thank you",
+    ],
+)
+def test_acknowledgments_route_to_casual_when_no_pending_question(
+    router: QueryRouter, ack: str
+):
+    history = [_assistant_msg("The policy provides 20 days annual leave.")]
+    decision = router.route(query=ack, conversation=history)
+    assert decision.mode == ConversationMode.CASUAL
+    assert decision.reason == RoutingReason.EXPLICIT_CASUAL
+    assert decision.rule == "acknowledgment"
+    assert decision.routing_rule == "acknowledgment"
+
+
+@pytest.mark.parametrize(
+    "agreement",
+    ["ok", "sure", "sounds good"],
+)
+@pytest.mark.parametrize(
+    "question_prompt",
+    [
+        "Want me to summarize section 4?",
+        "Want me to summarize section 4?   ",
+        'Want me to summarize section 4?"',
+        "Want me to summarize section 4? 🤔",
+    ],
+)
+def test_pending_question_guard_blocks_acknowledgment_casual_route(
+    router: QueryRouter, agreement: str, question_prompt: str
+):
+    history = [_assistant_msg(question_prompt)]
+    decision = router.route(query=agreement, conversation=history)
+    assert decision.mode == ConversationMode.KNOWLEDGE
+    assert decision.reason == RoutingReason.DEFAULT_KNOWLEDGE
+    assert decision.rule == "default"
+
+
+def test_trailing_question_mark_blocks_casual_acknowledgment(router: QueryRouter):
+    decision = router.route(query="got it?", conversation=[])
+    assert decision.mode == ConversationMode.KNOWLEDGE
+    assert decision.reason == RoutingReason.DEFAULT_KNOWLEDGE
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "got it, but what about latency?",
+        "not got it",
+        "got it, summarize the policy",
+    ],
+)
+def test_acknowledgment_with_substantive_or_negated_content_routes_to_knowledge(
+    router: QueryRouter, query: str
+):
+    decision = router.route(query=query, conversation=[])
+    assert decision.mode == ConversationMode.KNOWLEDGE
+
+
+def test_followup_after_acknowledgment_anchors_on_knowledge_user_turn(
+    router: QueryRouter,
+):
+    # explain the leave policy -> got it -> why is that?
+    history = [
+        _user_msg("Explain the leave policy."),
+        _assistant_msg("The policy provides 20 days annual leave [1]."),
+        _user_msg("got it sir"),
+        _assistant_msg("You are welcome!"),
+    ]
+    decision = router.route(query="why is that?", conversation=history)
+    assert decision.mode == ConversationMode.KNOWLEDGE
+    assert decision.reason == RoutingReason.KNOWLEDGE_FOLLOW_UP
+
+
+def test_followup_after_courtesy_anchors_on_knowledge_user_turn(router: QueryRouter):
+    # explain the leave policy -> thanks -> why is that?
+    history = [
+        _user_msg("Explain the leave policy."),
+        _assistant_msg("The policy provides 20 days annual leave [1]."),
+        _user_msg("thanks"),
+        _assistant_msg("Anytime!"),
+    ]
+    decision = router.route(query="why is that?", conversation=history)
+    assert decision.mode == ConversationMode.KNOWLEDGE
+    assert decision.reason == RoutingReason.KNOWLEDGE_FOLLOW_UP
+
+
+def test_followup_after_acknowledgment_anchors_on_casual_user_turn(router: QueryRouter):
+    # who are you -> got it -> tell me more
+    history = [
+        _user_msg("Who are you?"),
+        _assistant_msg("I am an AI assistant."),
+        _user_msg("got it"),
+        _assistant_msg("Happy to help."),
+    ]
+    decision = router.route(query="Can you explain that?", conversation=history)
+    assert decision.mode == ConversationMode.CASUAL
+    assert decision.reason == RoutingReason.CASUAL_FOLLOW_UP

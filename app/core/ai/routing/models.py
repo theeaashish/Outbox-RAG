@@ -27,3 +27,8 @@ class QueryRoutingDecision:
 
     mode: ConversationMode
     reason: RoutingReason
+    rule: str = "default"
+
+    @property
+    def routing_rule(self) -> str:
+        return self.rule

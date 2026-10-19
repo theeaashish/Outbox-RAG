@@ -24,7 +24,7 @@ from app.core.exceptions import (
     CitationValidationException,
     DatabaseException,
 )
-from app.db.models import Message, User
+from app.db.models import Message, MessageSource, User
 from app.db.models.enums import MessageRole, UserStatus
 from app.dependencies.auth import get_current_user
 from app.dependencies.chat import get_chat_controller
@@ -38,6 +38,7 @@ from app.modules.chat.protocol.mapper import (
     to_run_error,
     to_run_finished,
     to_run_started,
+    to_sources_final_event,
     to_text_message_content,
     to_text_message_end,
     to_text_message_start,
@@ -293,13 +294,17 @@ def test_adapter_defers_text_message_start_until_first_token():
             ),
         )
     )
-    assert len(complete_frames) == 2
+    assert len(complete_frames) == 3
     ev4 = json.loads(complete_frames[0][6:].strip())
     ev5 = json.loads(complete_frames[1][6:].strip())
-    assert ev4["type"] == "TEXT_MESSAGE_END"
-    assert ev4["messageId"] == str(asst_id)
-    assert ev5["type"] == "RUN_FINISHED"
-    assert ev5["usage"][0]["totalTokens"] == 7
+    ev6 = json.loads(complete_frames[2][6:].strip())
+    assert ev4["type"] == "CUSTOM"
+    assert ev4["name"] == "sources.final"
+    assert ev4["value"]["sources"] == []
+    assert ev5["type"] == "TEXT_MESSAGE_END"
+    assert ev5["messageId"] == str(asst_id)
+    assert ev6["type"] == "RUN_FINISHED"
+    assert ev6["usage"][0]["totalTokens"] == 7
 
 
 def test_adapter_provider_error_before_first_token_emits_no_message_start():
@@ -424,6 +429,7 @@ def test_controller_stream_ag_ui_message_success():
             "CUSTOM",  # citations
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
+            "CUSTOM",  # sources.final
             "TEXT_MESSAGE_END",
             "RUN_FINISHED",
         ]
@@ -433,7 +439,8 @@ def test_controller_stream_ag_ui_message_success():
         # Check assistant message ID matches prepared.assistant_message_id
         assert collected_frames[3]["messageId"] == str(asst_id)
         assert collected_frames[4]["messageId"] == str(asst_id)
-        assert collected_frames[5]["messageId"] == str(asst_id)
+        assert collected_frames[5]["name"] == "sources.final"
+        assert collected_frames[6]["messageId"] == str(asst_id)
 
     asyncio.run(_test())
 
@@ -1152,3 +1159,174 @@ def test_controller_stream_ag_ui_finalization_failure_emits_run_error():
         assert types[-1] == "RUN_ERROR"
 
     asyncio.run(_test())
+
+
+# =====================================================================
+# 8. Sources.final Event Tests (Backend Contract)
+# =====================================================================
+
+
+def test_sources_final_event_wire_contract_and_camel_case_keys():
+    doc_id = uuid4()
+    chunk_id = uuid4()
+    sources = [
+        MessageSource(
+            id=uuid4(),
+            message_id=uuid4(),
+            citation_number=1,
+            is_cited=True,
+            source_order=0,
+            document_id=doc_id,
+            document_chunk_id=chunk_id,
+            document_name_snapshot="policy.pdf",
+            chunk_index_snapshot=3,
+            retrieval_score=0.92,
+        ),
+        MessageSource(
+            id=uuid4(),
+            message_id=uuid4(),
+            citation_number=2,
+            is_cited=False,
+            source_order=1,
+            document_id=None,
+            document_chunk_id=None,
+            document_name_snapshot="archived.pdf",
+            chunk_index_snapshot=0,
+            retrieval_score=0.65,
+        ),
+    ]
+
+    event = to_sources_final_event(sources=sources)
+    encoded = encode_event(event)
+    data = json.loads(encoded[6:].strip())
+
+    assert data["type"] == "CUSTOM"
+    assert data["name"] == "sources.final"
+    assert len(data["value"]["sources"]) == 2
+
+    # Check camelCase wire keys and exact fields:
+    # {citation, documentId, documentName, chunkIndex, score, isCited}
+    s1 = data["value"]["sources"][0]
+    assert s1["citation"] == 1
+    assert s1["documentId"] == str(doc_id)
+    assert s1["documentName"] == "policy.pdf"
+    assert s1["chunkIndex"] == 3
+    assert s1["score"] == 0.92
+    assert s1["isCited"] is True
+
+    s2 = data["value"]["sources"][1]
+    assert s2["citation"] == 2
+    assert s2["documentId"] is None
+    assert s2["documentName"] == "archived.pdf"
+    assert s2["chunkIndex"] == 0
+    assert s2["score"] == 0.65
+    assert s2["isCited"] is False
+
+
+def test_adapter_emits_sources_final_before_text_message_end_matching_persisted():
+    asst_id = uuid4()
+    adapter = AGUIProtocolAdapter(
+        run_id="run-src-test",
+        thread_id="thread-src-test",
+        assistant_message_id=asst_id,
+    )
+    adapter.on_start()
+    adapter.on_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.TOKEN,
+            payload=ChatStreamToken(delta="According to [1], answer."),
+        )
+    )
+
+    doc_id = uuid4()
+    persisted_source = MessageSource(
+        id=uuid4(),
+        message_id=asst_id,
+        citation_number=1,
+        is_cited=True,
+        source_order=0,
+        document_id=doc_id,
+        document_chunk_id=uuid4(),
+        document_name_snapshot="handbook.pdf",
+        chunk_index_snapshot=0,
+        retrieval_score=0.88,
+    )
+    asst_msg = Message(
+        id=asst_id,
+        conversation_id=uuid4(),
+        role=MessageRole.ASSISTANT,
+        content="According to [1], answer.",
+        sources=[persisted_source],
+    )
+
+    frames = adapter.on_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.COMPLETE,
+            payload=ChatStreamComplete(
+                assistant_message=asst_msg,
+                context=None,
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        )
+    )
+
+    assert len(frames) == 3
+    ev_sources = json.loads(frames[0][6:].strip())
+    ev_end = json.loads(frames[1][6:].strip())
+    ev_finished = json.loads(frames[2][6:].strip())
+
+    # Invariant: sources.final is emitted exactly once, BEFORE TEXT_MESSAGE_END
+    assert ev_sources["type"] == "CUSTOM"
+    assert ev_sources["name"] == "sources.final"
+    assert ev_sources["value"]["sources"][0]["citation"] == 1
+    assert ev_sources["value"]["sources"][0]["isCited"] is True
+    assert ev_sources["value"]["sources"][0]["documentName"] == "handbook.pdf"
+
+    assert ev_end["type"] == "TEXT_MESSAGE_END"
+    assert ev_end["messageId"] == str(asst_id)
+    assert ev_finished["type"] == "RUN_FINISHED"
+
+
+def test_adapter_sources_final_empty_when_no_sources():
+    asst_id = uuid4()
+    adapter = AGUIProtocolAdapter(
+        run_id="run-casual",
+        thread_id="thread-casual",
+        assistant_message_id=asst_id,
+    )
+    adapter.on_start()
+    adapter.on_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.TOKEN,
+            payload=ChatStreamToken(delta="I am happy to help!"),
+        )
+    )
+
+    asst_msg = Message(
+        id=asst_id,
+        conversation_id=uuid4(),
+        role=MessageRole.ASSISTANT,
+        content="I am happy to help!",
+        sources=[],
+    )
+
+    frames = adapter.on_event(
+        ChatStreamEvent(
+            type=ChatStreamEventType.COMPLETE,
+            payload=ChatStreamComplete(
+                assistant_message=asst_msg,
+                context=None,
+                model="test-model",
+                finish_reason="stop",
+                usage=None,
+            ),
+        )
+    )
+
+    assert len(frames) == 3
+    ev_sources = json.loads(frames[0][6:].strip())
+    assert ev_sources["type"] == "CUSTOM"
+    assert ev_sources["name"] == "sources.final"
+    assert ev_sources["value"]["sources"] == []

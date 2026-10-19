@@ -321,8 +321,10 @@ class ChatService:
                 "knowledge_base_id": str(knowledge_base_id),
                 "routing_mode": routing.mode.value,
                 "routing_reason": routing.reason.value,
+                "routing_rule": routing.rule,
                 "history_count": len(history),
                 "context_count": 0 if context is None else len(context.chunks),
+                "retrieved_count": 0 if context is None else len(context.chunks),
                 "prompt_message_count": len(prompt),
                 "latency_ms": round((perf_counter() - preparation_started_at) * 1000),
             },
@@ -657,6 +659,7 @@ class ChatService:
                 )
 
                 lifecycle.begin_validation()
+                format_deviations = 0
                 if prepared.context is not None:
                     valid_citations = {
                         chunk.citation for chunk in prepared.context.chunks
@@ -665,6 +668,7 @@ class ChatService:
                         content=assistant_content,
                         valid_citations=valid_citations,
                     )
+                    format_deviations = validation.format_deviations
                     if not validation.is_valid:
                         logger.warning(
                             "Citation validation failed: LLM generated invalid citation IDs or malformed markers",
@@ -672,6 +676,7 @@ class ChatService:
                                 "conversation_id": str(prepared.conversation_id),
                                 "invalid_citations": validation.invalid_citations,
                                 "valid_citations": list(valid_citations),
+                                "citation_format_deviations": format_deviations,
                             },
                         )
                         if self._citation_validation_strict:
@@ -702,18 +707,26 @@ class ChatService:
                 lifecycle.mark_assistant_durable()
                 lifecycle.mark_done()
 
+                retrieved_count = (
+                    0 if prepared.context is None else len(prepared.context.chunks)
+                )
+                cited_count = sum(1 for s in assistant_message.sources if s.is_cited)
+
                 logger.info(
                     "Chat stream completed",
                     extra={
                         "conversation_id": str(prepared.conversation_id),
                         "knowledge_base_id": str(prepared.knowledge_base_id),
+                        "routing_mode": prepared.routing.mode.value,
+                        "routing_reason": prepared.routing.reason.value,
+                        "routing_rule": prepared.routing.rule,
                         "model": completion.model,
                         "finish_reason": completion.finish_reason,
                         "delta_count": delta_count,
                         "streamed_characters": buffered_characters,
-                        "citation_count": 0
-                        if prepared.context is None
-                        else len(prepared.context.chunks),
+                        "retrieved_count": retrieved_count,
+                        "cited_count": cited_count,
+                        "citation_format_deviations": format_deviations,
                         "time_to_first_token_ms": (
                             None
                             if first_token_at is None

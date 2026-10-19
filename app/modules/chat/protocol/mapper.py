@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from ag_ui.core.events import (
     BaseEvent,
     CustomEvent,
@@ -89,7 +92,13 @@ def to_metadata_event(*, conversation_id: str, source_count: int) -> CustomEvent
 
 
 def to_citations_event(*, context: AssembledContext | None) -> CustomEvent:
-    """Create CUSTOM citations event."""
+    """
+    Create CUSTOM citations event.
+
+    Note:
+        Retrieved context, not cited sources; do not render as sources.
+        Retained for backward compatibility.
+    """
     sources = (
         [
             {
@@ -107,4 +116,31 @@ def to_citations_event(*, context: AssembledContext | None) -> CustomEvent:
     return CustomEvent(
         name="citations",
         value={"sources": sources},
+    )
+
+
+def to_sources_final_event(*, sources: Sequence[Any]) -> CustomEvent:
+    """
+    Create CUSTOM sources.final event.
+
+    Emitted before TEXT_MESSAGE_END to provide the final settled source set
+    with isCited status derived from persisted message sources.
+    """
+    return CustomEvent(
+        name="sources.final",
+        value={
+            "sources": [
+                {
+                    "citation": s.citation_number,
+                    "documentId": str(s.document_id)
+                    if s.document_id is not None
+                    else None,
+                    "documentName": s.document_name_snapshot,
+                    "chunkIndex": s.chunk_index_snapshot,
+                    "score": s.retrieval_score,
+                    "isCited": s.is_cited,
+                }
+                for s in sources
+            ]
+        },
     )
