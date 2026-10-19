@@ -7,8 +7,12 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
-from app.core.exceptions import StorageException, TransientStorageException
-from app.core.storage.base import StorageService
+from app.core.exceptions import (
+    ResourceNotFoundException,
+    StorageException,
+    TransientStorageException,
+)
+from app.core.storage.base import StorageService, StoredObjectMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +59,10 @@ class LocalFilesystemStorage(StorageService):
 
         return resolved
 
-    def save(self, path: str, content: bytes) -> None:
+    def save(self, key: str, content: bytes) -> None:
         """Write content via a temp file and atomic rename where practical."""
 
-        target = self._resolve_safe_path(path)
+        target = self._resolve_safe_path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -79,13 +83,13 @@ class LocalFilesystemStorage(StorageService):
         except PermissionError as exc:
             logger.exception(
                 "Storage save permission denied",
-                extra={"path": path, "size": len(content)},
+                extra={"path": key, "size": len(content)},
             )
             raise StorageException("Permission denied saving file to storage") from exc
         except Exception as exc:
             logger.exception(
                 "Storage save failed",
-                extra={"path": path, "size": len(content)},
+                extra={"path": key, "size": len(content)},
             )
             if _is_transient_fs_error(exc):
                 raise TransientStorageException(
@@ -93,62 +97,94 @@ class LocalFilesystemStorage(StorageService):
                 ) from exc
             raise StorageException("Failed to save file to storage") from exc
 
-        logger.info("Stored file", extra={"path": path, "size": len(content)})
+        logger.info("Stored file", extra={"path": key, "size": len(content)})
 
-    def delete(self, path: str) -> None:
+    def delete(self, key: str) -> None:
         """Delete a stored file if present."""
 
-        target = self._resolve_safe_path(path)
+        target = self._resolve_safe_path(key)
 
         try:
             if target.is_file():
                 target.unlink()
-                logger.info("Deleted stored file", extra={"path": path})
+                logger.info("Deleted stored file", extra={"path": key})
         except StorageException:
             raise
         except PermissionError as exc:
-            logger.exception("Storage delete permission denied", extra={"path": path})
+            logger.exception("Storage delete permission denied", extra={"path": key})
             raise StorageException(
                 "Permission denied deleting file from storage"
             ) from exc
         except Exception as exc:
-            logger.exception("Storage delete failed", extra={"path": path})
+            logger.exception("Storage delete failed", extra={"path": key})
             if _is_transient_fs_error(exc):
                 raise TransientStorageException(
                     "Failed to delete file from storage"
                 ) from exc
             raise StorageException("Failed to delete file from storage") from exc
 
-    def exists(self, path: str) -> bool:
-        """Return whether a relative key exists on disk."""
+    def head(self, key: str) -> StoredObjectMetadata:
+        """Return metadata for a stored local file."""
+
+        target = self._resolve_safe_path(key)
 
         try:
-            return self._resolve_safe_path(path).is_file()
-        except StorageException:
-            return False
+            if not target.is_file():
+                raise ResourceNotFoundException("Stored object not found")
 
-    def read(self, path: str) -> bytes:
+            stat_result = target.stat()
+
+            return StoredObjectMetadata(
+                size=stat_result.st_size,
+                content_type=None,
+                etag=None,
+            )
+
+        except (ResourceNotFoundException, StorageException):
+            raise
+        except FileNotFoundError as exc:
+            logger.warning(
+                "Stored object not found",
+                extra={"key": key},
+            )
+            raise ResourceNotFoundException("Stored object not found") from exc
+        except OSError as exc:
+            logger.exception(
+                "Storage head failed",
+                extra={"key": key},
+            )
+
+            if _is_transient_fs_error(exc):
+                raise TransientStorageException(
+                    "Failed to retrieve stored object metadata"
+                ) from exc
+
+            raise StorageException("Failed to retrieve stored object metadata") from exc
+
+    def read(self, key: str) -> bytes:
         """Read file content from local filesystem storage."""
 
-        target = self._resolve_safe_path(path)
+        target = self._resolve_safe_path(key)
 
         try:
+            if not target.is_file():
+                raise ResourceNotFoundException("Stored object not found")
             return target.read_bytes()
-        except StorageException:
+        except (ResourceNotFoundException, StorageException):
             raise
         except FileNotFoundError as exc:
             logger.warning(
                 "Stored file not found",
-                extra={"path": path},
+                extra={"path": key},
             )
-            raise StorageException("Stored file not found") from exc
+            raise ResourceNotFoundException("Stored object not found") from exc
         except PermissionError as exc:
-            logger.exception("Storage read permission denied", extra={"path": path})
+            logger.exception("Storage read permission denied", extra={"path": key})
             raise StorageException("Permission denied accessing storage file") from exc
         except Exception as exc:
             logger.exception(
                 "Storage read failed",
-                extra={"path": path},
+                extra={"path": key},
             )
             if _is_transient_fs_error(exc):
                 raise TransientStorageException(

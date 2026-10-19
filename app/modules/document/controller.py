@@ -5,7 +5,15 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.document.incoming_file import IncomingFile
 from app.db.models import Document
-from app.modules.document.schemas import DocumentListResponse, DocumentResponse
+from app.modules.document.schemas import (
+    CompleteDocumentUploadResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    InitiateDocumentUploadRequest,
+    InitiateDocumentUploadResponse,
+    RefreshUploadAuthorizationResponse,
+    UploadAuthorizationResponse,
+)
 from app.modules.document.service import DocumentService
 
 
@@ -50,4 +58,72 @@ class DocumentController:
             results=[
                 DocumentResponse.model_validate(document) for document in documents
             ]
+        )
+
+    def initiate_upload(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+        request: InitiateDocumentUploadRequest,
+    ) -> InitiateDocumentUploadResponse:
+        """Initiate direct-to-storage document upload."""
+
+        document, presigned_url = self._service.initiate_upload(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            filename=request.filename,
+            content_type=request.content_type,
+            file_size=request.file_size,
+        )
+        return InitiateDocumentUploadResponse(
+            document_id=document.id,
+            upload=UploadAuthorizationResponse(
+                url=presigned_url.url,
+                method=presigned_url.method,
+                expires_in=presigned_url.expires_in,
+                headers=presigned_url.headers,
+                form_fields=presigned_url.form_fields,
+            ),
+        )
+
+    def complete_upload(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+        document_id: UUID,
+    ) -> CompleteDocumentUploadResponse:
+        """Complete and finalize direct-to-storage document upload."""
+
+        document = self._service.complete_upload(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+        )
+        return CompleteDocumentUploadResponse.model_validate(document)
+
+    def refresh_upload_authorization(
+        self,
+        *,
+        user_id: UUID,
+        knowledge_base_id: UUID,
+        document_id: UUID,
+    ) -> RefreshUploadAuthorizationResponse:
+        """Refresh upload authorization for an existing UPLOADING document."""
+
+        doc_id, presigned_url = self._service.refresh_upload_authorization(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            document_id=document_id,
+        )
+        return RefreshUploadAuthorizationResponse(
+            document_id=doc_id,
+            upload=UploadAuthorizationResponse(
+                url=presigned_url.url,
+                method=presigned_url.method,
+                expires_in=presigned_url.expires_in,
+                headers=presigned_url.headers,
+                form_fields=presigned_url.form_fields,
+            ),
         )

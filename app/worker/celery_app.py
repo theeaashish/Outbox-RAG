@@ -31,6 +31,7 @@ celery_app.conf.update(
         "document.process": {"queue": QueueNames.DOCUMENTS},
         "outbox.publish": {"queue": QueueNames.MAINTENANCE},
         "session.cleanup": {"queue": QueueNames.MAINTENANCE},
+        "document.cleanup_stale_uploads": {"queue": QueueNames.MAINTENANCE},
     },
     beat_schedule={
         "publish-outbox-events": {
@@ -40,6 +41,11 @@ celery_app.conf.update(
         },
         "cleanup-sessions": {
             "task": "session.cleanup",
+            "schedule": 3600.0,
+            "options": {"queue": QueueNames.MAINTENANCE},
+        },
+        "cleanup-stale-uploads": {
+            "task": "document.cleanup_stale_uploads",
             "schedule": 3600.0,
             "options": {"queue": QueueNames.MAINTENANCE},
         },

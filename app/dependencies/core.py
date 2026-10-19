@@ -15,13 +15,16 @@ from app.core.ai.prompting.rag import RAGPromptBuilder
 from app.core.ai.routing.router import QueryRouter
 from app.core.auth.passwords import PasswordHasherService
 from app.core.auth.session import SessionTokenService
-from app.core.config import settings
+from app.core.config import StorageBackend, settings
 from app.core.document.hasher import FileHasher
 from app.core.document.normalizer import DocumentNormalizer
 from app.core.document.parsers.registry import DocumentParserRegistry
 from app.core.document.validator import UploadValidator
+from app.core.exceptions import StorageException
 from app.core.pagination import CursorCodec
 from app.core.storage import LocalFilesystemStorage, StorageService
+from app.core.storage.presigned import PresignedUrlService
+from app.core.storage.s3 import S3ObjectStorage
 
 
 @lru_cache
@@ -67,8 +70,15 @@ def get_upload_validator() -> UploadValidator:
 
 @lru_cache
 def get_storage_service() -> StorageService:
-    """Return the application's storage service"""
-    return LocalFilesystemStorage(root_directory=settings.upload_directory)
+    """Return the configured application storage service."""
+
+    if settings.storage_backend == StorageBackend.LOCAL:
+        return LocalFilesystemStorage(root_directory=settings.upload_directory)
+
+    if settings.storage_backend == StorageBackend.S3:
+        return get_s3_object_storage()
+
+    raise RuntimeError(f"Unsupported storage backend: {settings.storage_backend}")
 
 
 @lru_cache
@@ -125,3 +135,59 @@ def get_password_hasher() -> PasswordHasherService:
 def get_session_token_service() -> SessionTokenService:
     """Return the application's session token service."""
     return SessionTokenService()
+
+
+@lru_cache
+def get_s3_object_storage() -> S3ObjectStorage:
+    """Return the configured S3-compatible storage adapter."""
+
+    secret_access_key = settings.s3_secret_access_key.get_secret_value()
+
+    required_settings = {
+        "S3_BUCKET_NAME": settings.s3_bucket_name,
+        "S3_ENDPOINT_URL": settings.s3_endpoint_url,
+        "S3_REGION_NAME": settings.s3_region_name,
+        "S3_ACCESS_KEY_ID": settings.s3_access_key_id,
+        "S3_SECRET_ACCESS_KEY": secret_access_key,
+    }
+
+    missing_settings = [
+        name for name, value in required_settings.items() if not value.strip()
+    ]
+
+    if missing_settings:
+        raise RuntimeError(
+            "Missing required S3 configuration: " + ", ".join(missing_settings)
+        )
+
+    return S3ObjectStorage(
+        bucket_name=settings.s3_bucket_name,
+        endpoint_url=settings.s3_endpoint_url,
+        region_name=settings.s3_region_name,
+        access_key_id=settings.s3_access_key_id,
+        secret_access_key=secret_access_key,
+    )
+
+
+@lru_cache
+def get_presigned_url_service() -> PresignedUrlService:
+    """Return the presigned URL capability of the configured backend."""
+
+    if settings.storage_backend != StorageBackend.S3:
+        raise StorageException("Presigned URLs require the S3 storage backend")
+
+    return get_s3_object_storage()
+
+
+@lru_cache
+def get_optional_presigned_url_service() -> PresignedUrlService | None:
+    """Return upload-authorization support when the backend provides it.
+
+    Legacy document routes must keep working on the local backend, so this is
+    resolved lazily and only direct uploads require the capability.
+    """
+
+    if settings.storage_backend != StorageBackend.S3:
+        return None
+
+    return get_s3_object_storage()

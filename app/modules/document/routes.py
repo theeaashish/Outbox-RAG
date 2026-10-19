@@ -4,7 +4,14 @@ from fastapi import APIRouter, File, UploadFile, status
 
 from app.dependencies.auth import CurrentUser
 from app.dependencies.controllers import DocumentControllerDep
-from app.modules.document.schemas import DocumentListResponse, DocumentResponse
+from app.modules.document.schemas import (
+    CompleteDocumentUploadResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    InitiateDocumentUploadRequest,
+    InitiateDocumentUploadResponse,
+    RefreshUploadAuthorizationResponse,
+)
 
 router = APIRouter(prefix="/knowledge-bases", tags=["Documents"])
 
@@ -44,3 +51,60 @@ async def upload_document(
     )
 
     return DocumentResponse.model_validate(document)
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/upload/initiate",
+    response_model=InitiateDocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def initiate_upload(
+    *,
+    knowledge_base_id: UUID,
+    request: InitiateDocumentUploadRequest,
+    controller: DocumentControllerDep,
+    current_user: CurrentUser,
+) -> InitiateDocumentUploadResponse:
+    return controller.initiate_upload(
+        user_id=current_user.id,
+        knowledge_base_id=knowledge_base_id,
+        request=request,
+    )
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/{document_id}/complete",
+    response_model=CompleteDocumentUploadResponse,
+    status_code=status.HTTP_200_OK,
+)
+def complete_upload(
+    *,
+    knowledge_base_id: UUID,
+    document_id: UUID,
+    controller: DocumentControllerDep,
+    current_user: CurrentUser,
+) -> CompleteDocumentUploadResponse:
+    return controller.complete_upload(
+        user_id=current_user.id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+    )
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/{document_id}/upload/refresh",
+    response_model=RefreshUploadAuthorizationResponse,
+    status_code=status.HTTP_200_OK,
+)
+def refresh_upload_authorization(
+    *,
+    knowledge_base_id: UUID,
+    document_id: UUID,
+    controller: DocumentControllerDep,
+    current_user: CurrentUser,
+) -> RefreshUploadAuthorizationResponse:
+    return controller.refresh_upload_authorization(
+        user_id=current_user.id,
+        knowledge_base_id=knowledge_base_id,
+        document_id=document_id,
+    )

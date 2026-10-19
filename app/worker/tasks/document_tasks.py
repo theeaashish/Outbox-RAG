@@ -152,3 +152,41 @@ def process_document(self, document_id: str) -> None:
 
     finally:
         db.close()
+
+
+@celery_app.task(name="document.cleanup_stale_uploads", acks_late=True)
+def cleanup_stale_uploads() -> None:
+    """Periodic maintenance task to clean up abandoned UPLOADING documents."""
+    from datetime import timedelta
+
+    from app.dependencies.core import (
+        get_file_hasher,
+        get_optional_presigned_url_service,
+        get_storage_service,
+        get_upload_validator,
+    )
+    from app.modules.document.service import DocumentService
+    from app.repositories.knowledge_base import KnowledgeBaseRepository
+
+    db = SessionLocal()
+    try:
+        service = DocumentService(
+            db=db,
+            knowledge_base_repository=KnowledgeBaseRepository(db=db),
+            document_repository=DocumentRepository(db=db),
+            validator=get_upload_validator(),
+            hasher=get_file_hasher(),
+            storage=get_storage_service(),
+            presigned_url_service=get_optional_presigned_url_service(),
+        )
+        deleted = service.cleanup_stale_uploading_documents(
+            older_than=timedelta(hours=24),
+            batch_size=100,
+        )
+        if deleted > 0:
+            logger.info("Cleaned up %d stale UPLOADING documents", deleted)
+    except Exception:
+        logger.exception("Failed to clean up stale UPLOADING documents")
+        raise
+    finally:
+        db.close()

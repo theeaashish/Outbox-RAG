@@ -4,6 +4,7 @@ from enum import StrEnum
 class DocumentStatus(StrEnum):
     """Document processing status"""
 
+    UPLOADING = "uploading"
     PENDING = "pending"
     PROCESSING = "processing"
     READY = "ready"

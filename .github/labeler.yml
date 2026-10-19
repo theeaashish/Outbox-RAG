@@ -1,0 +1,74 @@
+# Configuration for actions/labeler (v5)
+# Maps modified file paths to PR labels automatically
+
+module:retrieval:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/retrieval/**"
+
+module:chat:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/chat/**"
+
+module:document:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/document/**"
+
+module:auth:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/auth/**"
+          - "app/core/auth/**"
+
+module:conversations:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/conversations/**"
+
+module:projects:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/modules/projects/**"
+
+api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/api/**"
+
+worker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/worker/**"
+
+database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "alembic/**"
+          - "alembic.ini"
+          - "app/db/**"
+          - "app/repositories/**"
+
+storage:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "app/core/storage/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pyproject.toml"
+          - "uv.lock"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "Makefile"
