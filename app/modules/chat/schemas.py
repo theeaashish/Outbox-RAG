@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.ai.llm.models import LLMUsage
 from app.core.config import settings
@@ -12,10 +12,32 @@ from app.modules.conversations.schemas import (
 )
 
 
+class ChatModelInfo(BaseModel):
+    """Metadata describing a chat model option for the client."""
+
+    id: str
+    name: str
+    provider: str
+    is_default: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChatModelsResponse(BaseModel):
+    """Response containing available chat models and default selection."""
+
+    default_model: str
+    models: list[ChatModelInfo]
+
+
 class ChatRequest(BaseModel):
     """Request payload for a synchronous chat turn."""
 
     content: str = Field(max_length=settings.chat_max_message_characters)
+    model: str | None = Field(
+        default=None,
+        description="Optional model identifier or provider name (e.g. 'openai/gpt-oss-120b', 'gemini-3.5-flash-lite', 'groq', 'gemini').",
+    )
 
     @field_validator("content", mode="before")
     @classmethod

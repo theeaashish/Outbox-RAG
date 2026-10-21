@@ -66,6 +66,19 @@ class Settings(BaseSettings):
 
     gemini_chat_max_output_tokens: int = Field(default=4_096, ge=1)
 
+    # groq
+
+    groq_api_key: str = Field(default="")
+
+    groq_chat_model: str = Field(default="openai/gpt-oss-120b")
+
+    groq_chat_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+
+    groq_chat_max_output_tokens: int = Field(default=4_096, ge=1)
+
+    # default chat provider
+    default_chat_model: str = Field(default="groq")
+
     # storage and upload
 
     storage_backend: StorageBackend = Field(default=StorageBackend.S3)

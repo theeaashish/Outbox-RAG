@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from threading import Lock
 from time import perf_counter
@@ -73,6 +73,7 @@ class PreparedChatTurn:
     prompt: list[ChatMessage]
     routing: QueryRoutingDecision
     assistant_message_id: UUID
+    llm_provider: LLMProvider | None = None
 
 
 from enum import StrEnum
@@ -195,6 +196,7 @@ class ChatService:
         stream_max_buffered_characters: int,
         citation_validator: CitationValidator | None = None,
         citation_validation_strict: bool | None = None,
+        llm_provider_factory: Callable[[str | None], LLMProvider] | None = None,
     ) -> None:
         self._db = db
         self._conversation_repository = conversation_repository
@@ -205,6 +207,7 @@ class ChatService:
         self._conversational_prompt_builder = conversational_prompt_builder
         self._query_router = query_router
         self._llm_provider = llm_provider
+        self._llm_provider_factory = llm_provider_factory
         self._history_message_limit = history_message_limit
         self._retrieval_limit = retrieval_limit
         self._similarity_threshold = similarity_threshold
@@ -215,6 +218,12 @@ class ChatService:
             if citation_validation_strict is not None
             else settings.citation_validation_strict
         )
+
+    def _get_provider(self, model: str | None = None) -> LLMProvider:
+        """Resolve LLM provider for the requested model or fallback to default."""
+        if self._llm_provider_factory is not None and model is not None:
+            return self._llm_provider_factory(model)
+        return self._llm_provider
 
     def _get_conversation(
         self,
@@ -261,10 +270,13 @@ class ChatService:
         user_id: UUID,
         conversation_id: UUID,
         content: str,
+        model: str | None = None,
     ) -> PreparedChatTurn:
         """Build a prompt and release read resources before provider work begins."""
 
         preparation_started_at = perf_counter()
+        provider = self._get_provider(model)
+
         try:
             user_message_id = self._persist_user_message(
                 user_id=user_id,
@@ -339,6 +351,7 @@ class ChatService:
             prompt=prompt,
             routing=routing,
             assistant_message_id=uuid4(),
+            llm_provider=provider,
         )
 
     def _persist_user_message(
@@ -490,6 +503,7 @@ class ChatService:
         user_id: UUID,
         conversation_id: UUID,
         content: str,
+        model: str | None = None,
     ) -> ChatTurnResult:
         """Generate and atomically persist a non-streaming chat turn."""
 
@@ -497,8 +511,10 @@ class ChatService:
             user_id=user_id,
             conversation_id=conversation_id,
             content=content,
+            model=model,
         )
-        llm_response = self._llm_provider.generate(prepared.prompt)
+        provider = prepared.llm_provider or self._llm_provider
+        llm_response = provider.generate(prepared.prompt)
         assistant_content = self._normalize_assistant_content(
             content=llm_response.content
         )
@@ -583,7 +599,8 @@ class ChatService:
                 if not lifecycle.accepts_provider_output():
                     return
 
-                provider_stream = self._llm_provider.stream(prepared.prompt)
+                provider = prepared.llm_provider or self._llm_provider
+                provider_stream = provider.stream(prepared.prompt)
 
                 for event in provider_stream:
                     if isinstance(event, LLMStreamDelta):

@@ -9,6 +9,8 @@ from app.core.ai.embeddings.base import EmbeddingGenerator
 from app.core.ai.embeddings.gemini import GeminiEmbeddingGenerator
 from app.core.ai.llm.base import LLMProvider
 from app.core.ai.llm.gemini import GeminiLLMProvider
+from app.core.ai.llm.groq import GroqLLMProvider
+from app.core.ai.llm.registry import LLMProviderRegistry
 from app.core.ai.prompting.base import PromptBuilder
 from app.core.ai.prompting.conversational import ConversationalPromptBuilder
 from app.core.ai.prompting.rag import RAGPromptBuilder
@@ -110,10 +112,30 @@ def get_query_router() -> QueryRouter:
 
 
 @lru_cache
-def get_llm_provider() -> LLMProvider:
-    """Return the application's chat language model provider."""
+def get_groq_llm_provider() -> GroqLLMProvider:
+    """Return the application's Groq LLM provider."""
+    return GroqLLMProvider()
 
+
+@lru_cache
+def get_gemini_llm_provider() -> GeminiLLMProvider:
+    """Return the application's Gemini LLM provider."""
     return GeminiLLMProvider()
+
+
+@lru_cache
+def get_llm_provider_registry() -> LLMProviderRegistry:
+    """Return the application's LLM provider registry."""
+    return LLMProviderRegistry(
+        groq_provider=get_groq_llm_provider(),
+        gemini_provider=get_gemini_llm_provider(),
+    )
+
+
+@lru_cache
+def get_llm_provider() -> LLMProvider:
+    """Return the application's default chat language model provider."""
+    return get_llm_provider_registry().default_provider
 
 
 @lru_cache

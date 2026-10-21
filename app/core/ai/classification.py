@@ -3,6 +3,18 @@ from __future__ import annotations
 import httpx
 from google.genai.errors import APIError, ClientError, ServerError
 
+try:
+    import groq
+
+    _GROQ_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+        groq.APIConnectionError,
+        groq.APITimeoutError,
+        groq.RateLimitError,
+        groq.InternalServerError,
+    )
+except ImportError:
+    _GROQ_TRANSIENT_ERRORS = ()
+
 from app.core.constants import PERMANENT_AI_STATUS_CODES, TRANSIENT_AI_STATUS_CODES
 from app.core.exceptions import (
     AIServiceException,
@@ -16,6 +28,10 @@ def _extract_status_code(exc: BaseException) -> int | None:
         code = getattr(exc, "code", None)
         if isinstance(code, int):
             return code
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
 
     if isinstance(exc, httpx.HTTPStatusError):
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -58,6 +74,10 @@ def is_transient_ai_error(exc: BaseException | None) -> bool:
 
     # Google GenAI Server Error (5xx)
     if isinstance(exc, ServerError):
+        return True
+
+    # Groq transient errors
+    if _GROQ_TRANSIENT_ERRORS and isinstance(exc, _GROQ_TRANSIENT_ERRORS):
         return True
 
     # Inspect extracted HTTP status codes

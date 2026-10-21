@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
+from app.core.ai.llm.registry import LLMProviderRegistry
 from app.core.config import settings
 from app.core.exceptions import (
     AIServiceException,
@@ -21,7 +22,11 @@ from app.core.exceptions import (
 )
 from app.modules.chat import mapper
 from app.modules.chat.protocol.adapter import AGUIProtocolAdapter
-from app.modules.chat.schemas import ChatResponse
+from app.modules.chat.schemas import (
+    ChatModelInfo,
+    ChatModelsResponse,
+    ChatResponse,
+)
 from app.modules.chat.service import (
     ChatEventStream,
     ChatService,
@@ -251,8 +256,49 @@ async def _stream_loop[T](
 class ChatController:
     """Thin controller for synchronous and streaming chat requests."""
 
-    def __init__(self, *, chat_service: ChatService) -> None:
+    def __init__(
+        self,
+        *,
+        chat_service: ChatService,
+        llm_registry: LLMProviderRegistry | None = None,
+    ) -> None:
         self._chat_service = chat_service
+        self._llm_registry = llm_registry
+
+    def get_available_models(self) -> ChatModelsResponse:
+        """Return the available chat models and default selection for clients."""
+        if self._llm_registry is not None:
+            models = [
+                ChatModelInfo(
+                    id=m.id,
+                    name=m.name,
+                    provider=m.provider,
+                    is_default=m.is_default,
+                )
+                for m in self._llm_registry.get_available_models()
+            ]
+            default_model = self._llm_registry.default_model_id
+        else:
+            default_model = settings.groq_chat_model
+            models = [
+                ChatModelInfo(
+                    id=settings.groq_chat_model,
+                    name=f"Groq ({settings.groq_chat_model})",
+                    provider="groq",
+                    is_default=True,
+                ),
+                ChatModelInfo(
+                    id=settings.gemini_chat_model,
+                    name=f"Gemini ({settings.gemini_chat_model})",
+                    provider="gemini",
+                    is_default=False,
+                ),
+            ]
+
+        return ChatModelsResponse(
+            default_model=default_model,
+            models=models,
+        )
 
     async def send_message(
         self,
@@ -260,6 +306,7 @@ class ChatController:
         user_id: UUID,
         conversation_id: UUID,
         content: str,
+        model: str | None = None,
     ) -> ChatResponse:
         """Generate one assistant response and map it to the API contract."""
 
@@ -268,6 +315,7 @@ class ChatController:
             user_id=user_id,
             conversation_id=conversation_id,
             content=content,
+            model=model,
         )
 
         return mapper.to_chat_response(
@@ -281,6 +329,7 @@ class ChatController:
         conversation_id: UUID,
         content: str,
         request: Request,
+        model: str | None = None,
     ) -> EventSourceResponse:
         """Prepare a turn, then expose its provider output as SSE events."""
 
@@ -289,6 +338,7 @@ class ChatController:
             user_id=user_id,
             conversation_id=conversation_id,
             content=content,
+            model=model,
         )
         stream = self._chat_service.stream_prepared_turn(prepared=prepared)
         sink = V1ProtocolSink()
@@ -310,6 +360,7 @@ class ChatController:
         content: str,
         request: Request,
         client_run_id: str | None = None,
+        model: str | None = None,
     ) -> EventSourceResponse:
         """Prepare a turn, then expose its provider output as AG-UI SSE frames."""
 
@@ -318,6 +369,7 @@ class ChatController:
             user_id=user_id,
             conversation_id=conversation_id,
             content=content,
+            model=model,
         )
         stream = self._chat_service.stream_prepared_turn(prepared=prepared)
         run_id = client_run_id or str(uuid4())

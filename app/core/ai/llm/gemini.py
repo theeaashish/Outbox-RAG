@@ -168,8 +168,8 @@ class GeminiLLMProvider(LLMProvider):
         "FINISH_REASON_UNSPECIFIED": "unknown",
     }
 
-    def __init__(self) -> None:
-        self._model_name = settings.gemini_chat_model
+    def __init__(self, model_name: str | None = None) -> None:
+        self._model_name = model_name or settings.gemini_chat_model
 
         self._client = ChatGoogleGenerativeAI(
             model=self._model_name,

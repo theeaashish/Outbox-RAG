@@ -6,6 +6,7 @@ from fastapi import Depends
 
 from app.core.ai.context.assembler import ContextAssembler
 from app.core.ai.llm.base import LLMProvider
+from app.core.ai.llm.registry import LLMProviderRegistry
 from app.core.ai.prompting.base import PromptBuilder
 from app.core.ai.prompting.conversational import ConversationalPromptBuilder
 from app.core.ai.routing.router import QueryRouter
@@ -14,6 +15,7 @@ from app.dependencies.core import (
     get_context_assembler,
     get_conversational_prompt_builder,
     get_llm_provider,
+    get_llm_provider_registry,
     get_prompt_builder,
     get_query_router,
 )
@@ -63,6 +65,11 @@ LLMProviderDep = Annotated[
     Depends(get_llm_provider),
 ]
 
+LLMProviderRegistryDep = Annotated[
+    LLMProviderRegistry,
+    Depends(get_llm_provider_registry),
+]
+
 
 def get_chat_service(
     db: DBSession,
@@ -74,6 +81,7 @@ def get_chat_service(
     conversational_prompt_builder: ConversationalPromptBuilderDep,
     query_router: QueryRouterDep,
     llm_provider: LLMProviderDep,
+    llm_registry: LLMProviderRegistryDep,
 ) -> ChatService:
     """Return a configured ChatService."""
 
@@ -87,6 +95,7 @@ def get_chat_service(
         conversational_prompt_builder=conversational_prompt_builder,
         query_router=query_router,
         llm_provider=llm_provider,
+        llm_provider_factory=llm_registry.resolve,
         history_message_limit=settings.chat_history_message_limit,
         retrieval_limit=settings.default_top_k,
         similarity_threshold=settings.similarity_threshold,
@@ -103,10 +112,14 @@ ChatServiceDep = Annotated[
 
 def get_chat_controller(
     chat_service: ChatServiceDep,
+    llm_registry: LLMProviderRegistryDep,
 ) -> ChatController:
     """Return a configured ChatController."""
 
-    return ChatController(chat_service=chat_service)
+    return ChatController(
+        chat_service=chat_service,
+        llm_registry=llm_registry,
+    )
 
 
 ChatControllerDep = Annotated[

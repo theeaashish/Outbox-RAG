@@ -6,13 +6,45 @@ from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
 from app.dependencies.auth import CurrentUser
-from app.dependencies.chat import ChatControllerDep
-from app.modules.chat.schemas import ChatRequest, ChatResponse
+from app.dependencies.chat import ChatControllerDep, LLMProviderRegistryDep
+from app.modules.chat.schemas import (
+    ChatModelInfo,
+    ChatModelsResponse,
+    ChatRequest,
+    ChatResponse,
+)
 
 router = APIRouter(
     prefix="/conversations",
     tags=["Chat"],
 )
+
+chat_models_router = APIRouter(
+    prefix="/chat",
+    tags=["Chat"],
+)
+
+
+@router.get(
+    "/models",
+    response_model=ChatModelsResponse,
+)
+@chat_models_router.get(
+    "/models",
+    response_model=ChatModelsResponse,
+)
+def list_chat_models(
+    current_user: CurrentUser,
+    registry: LLMProviderRegistryDep,
+) -> ChatModelsResponse:
+    """Return available chat models and default selection for the client."""
+
+    return ChatModelsResponse(
+        default_model=registry.default_model_id,
+        models=[
+            ChatModelInfo.model_validate(m) for m in registry.get_available_models()
+        ],
+    )
 
 
 @router.post(
@@ -32,6 +64,7 @@ async def send_message(
         user_id=current_user.id,
         conversation_id=conversation_id,
         content=request.content,
+        model=request.model,
     )
 
 
@@ -51,4 +84,5 @@ async def stream_message(
         conversation_id=conversation_id,
         content=request.content,
         request=http_request,
+        model=request.model,
     )

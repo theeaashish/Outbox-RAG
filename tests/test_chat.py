@@ -670,6 +670,7 @@ class _StubChatController:
         user_id: object = None,
         conversation_id: object,
         content: str,
+        model: str | None = None,
     ) -> ChatResponse:
         if content == "missing":
             raise ResourceNotFoundException("Conversation not found")
